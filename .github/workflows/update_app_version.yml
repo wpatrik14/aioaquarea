@@ -2,8 +2,8 @@ name: Update Panasonic Aquarea Version
 
 on:
   schedule:
-    - cron: '0 * * * *'  # Läuft einmal pro Stunde
-  workflow_dispatch:      # Ermöglicht manuelles Starten per Klick
+    - cron: '0 4 * * *'
+  workflow_dispatch:
 
 jobs:
   update-version:
