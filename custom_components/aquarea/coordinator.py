@@ -14,9 +14,9 @@ from .aioaquarea.data import DeviceInfo # Explicit import
 from .aioaquarea.errors import RequestFailedError # Explicit import
 from .const import DOMAIN
 
-DEFAULT_SCAN_INTERVAL_SECONDS = 30
+DEFAULT_SCAN_INTERVAL_SECONDS = 60
 SCAN_INTERVAL = timedelta(seconds=DEFAULT_SCAN_INTERVAL_SECONDS)
-CONSUMPTION_REFRESH_INTERVAL_MINUTES = 5
+CONSUMPTION_REFRESH_INTERVAL_MINUTES = 15
 CONSUMPTION_REFRESH_INTERVAL = timedelta(minutes=CONSUMPTION_REFRESH_INTERVAL_MINUTES)
 
 _LOGGER = logging.getLogger(__name__)
