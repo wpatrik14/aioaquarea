@@ -1,0 +1,113 @@
+name: Update App Store App Version
+
+on:
+  schedule:
+    # Run daily at 2:00 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:  # Allow manual execution
+
+jobs:
+  update-version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Get App Store version
+        id: appstore
+        run: |
+          APP_ID="1348640525"
+          
+          # Call iTunes Lookup API
+          RESPONSE=$(curl -s "https://itunes.apple.com/lookup?id=$APP_ID")
+          
+          # Extract version using jq
+          VERSION=$(echo "$RESPONSE" | jq -r '.results[0].version')
+          
+          if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
+            echo "Error: version not found"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+          
+          echo "Version found: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          
+          # Also get app name for logging
+          APP_NAME=$(echo "$RESPONSE" | jq -r '.results[0].trackName')
+          echo "App: $APP_NAME"
+      
+      - name: Check current version in const.py
+        id: check
+        run: |
+          CURRENT_VERSION=$(grep "DEFAULT_X_APP_VERSION" aioaquarea/const.py | grep -oP '"\K[^"]+')
+          echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "Current version in code: $CURRENT_VERSION"
+          echo "Version on App Store: ${{ steps.appstore.outputs.version }}"
+          
+          if [ "$CURRENT_VERSION" = "${{ steps.appstore.outputs.version }}" ]; then
+            echo "needs_update=false" >> $GITHUB_OUTPUT
+            echo "Version is already up to date"
+          else
+            echo "needs_update=true" >> $GITHUB_OUTPUT
+            echo "Update is needed"
+          fi
+      
+      - name: Update const.py
+        if: steps.check.outputs.needs_update == 'true'
+        run: |
+          NEW_VERSION="${{ steps.appstore.outputs.version }}"
+          
+          # Update the line with DEFAULT_X_APP_VERSION
+          sed -i "s/DEFAULT_X_APP_VERSION = \".*\"/DEFAULT_X_APP_VERSION = \"$NEW_VERSION\"/" aioaquarea/const.py
+          
+          echo "File updated"
+          
+          # Show changes
+          echo "Applied changes:"
+          git diff aioaquarea/const.py
+      
+      - name: Create Pull Request
+        if: steps.check.outputs.needs_update == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: update Panasonic app version to ${{ steps.appstore.outputs.version }}"
+          title: "Update Panasonic ACCsmart app version to ${{ steps.appstore.outputs.version }}"
+          body: |
+            ## Automatic app version update
+            
+            This PR automatically updates the Panasonic ACCsmart app version from the Apple App Store.
+            
+            ### Details
+            - **Previous version**: `${{ steps.check.outputs.current_version }}`
+            - **New version**: `${{ steps.appstore.outputs.version }}`
+            - **App ID**: `1348640525`
+            - **Modified file**: `aioaquarea/const.py`
+            
+            ### Links
+            - [App on App Store](https://apps.apple.com/app/id1348640525)
+            
+            ---
+            This PR was automatically created by GitHub Actions.
+          branch: update-app-version-${{ steps.appstore.outputs.version }}
+          delete-branch: true
+          labels: |
+            dependencies
+            automated
+      
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Execution Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **App ID**: 1348640525" >> $GITHUB_STEP_SUMMARY
+          echo "- **App Store Version**: ${{ steps.appstore.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Current Version**: ${{ steps.check.outputs.current_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Update Needed**: ${{ steps.check.outputs.needs_update }}" >> $GITHUB_STEP_SUMMARY
