@@ -234,16 +234,17 @@ class AquareaDeviceControl:
 
     async def post_device_set_quiet_mode(self, long_id: str, mode: QuietMode) -> None:
         """Post quiet mode."""
-        data = {"status": [{"deviceGuid": long_id, "quietMode": mode.value}]}
+        data = {
+            "apiName": "/remote/v1/api/devices",
+            "requestMethod": "POST",
+            "bodyParam": {"gwid": long_id, "forceDHW": mode.value},
+        }
 
         await self._api_client.request(
             "POST",
-            f"{AQUAREA_SERVICE_DEVICES}/{long_id}",
-            headers=PanasonicRequestHeader.get_aqua_headers(
-                content_type="application/json",
-                referer=f"{self._base_url}{AQUAREA_SERVICE_A2W_STATUS_DISPLAY}",
-            ),
+            "remote/v1/app/common/transfer",
             json=data,
+            throw_on_error=True,
         )
 
     async def post_device_force_dhw(self, long_id: str, force_dhw: ForceDHW) -> None:
@@ -315,20 +316,14 @@ class AquareaDeviceControl:
     ) -> None:
         """Post powerful time."""
         data = {
-            "status": [
-                {
-                    "deviceGuid": long_id,
-                    "powerfulRequest": powerful_time.value,
-                }
-            ]
+            "apiName": "/remote/v1/api/devices",
+            "requestMethod": "POST",
+            "bodyParam": {"gwid": long_id, "powerfulRequest": powerful_time.value},
         }
 
         await self._api_client.request(
             "POST",
-            f"{AQUAREA_SERVICE_DEVICES}/{long_id}",
-            headers=PanasonicRequestHeader.get_aqua_headers(
-                content_type="application/json",
-                referer=f"{self._base_url}{AQUAREA_SERVICE_A2W_STATUS_DISPLAY}",
-            ),
+            "remote/v1/app/common/transfer",
             json=data,
+            throw_on_error=True,
         )
