@@ -237,7 +237,7 @@ class AquareaDeviceControl:
         data = {
             "apiName": "/remote/v1/api/devices",
             "requestMethod": "POST",
-            "bodyParam": {"gwid": long_id, "forceDHW": mode.value},
+            "bodyParam": {"gwid": long_id, "quietMode": mode.value},
         }
 
         await self._api_client.request(
