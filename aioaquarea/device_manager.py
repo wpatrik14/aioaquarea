@@ -253,6 +253,7 @@ class DeviceManager:
             holiday_timer=HolidayTimer(device.get("holidayTimer", 0)),
             powerful_time=PowerfulTime(device.get("powerful", 0)),
             special_status=None,  # Simplified to None
+            water_pressure=device.get("waterPressure"),
         )
 
         return device_status

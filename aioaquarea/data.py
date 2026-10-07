@@ -329,6 +329,7 @@ class DeviceStatus:
     holiday_timer: HolidayTimer
     powerful_time: PowerfulTime
     special_status: SpecialStatus | None
+    water_pressure: float | None = None
 
 
 @dataclass
@@ -620,6 +621,11 @@ class Device(ABC):
         if self.has_tank:
             return self._tank
         return None
+
+    @property
+    def water_pressure(self) -> float | None:
+        """The water circuit pressure in bar, if the device reports it"""
+        return self._status.water_pressure
 
     @property
     def pump_duty(self) -> int:
