@@ -89,3 +89,41 @@ The original library is by [Carlos J. Aliaga](https://github.com/cjaliaga) ([cja
 
 
 Big thanks to [ronhks](https://github.com/ronhks) for his awesome work on the [Panasonic Aquarea Smart Cloud integration with MQTT](https://github.com/ronhks/panasonic-aquarea-smart-cloud-mqtt).
+
+## Testing MFA login
+
+Panasonic now asks some accounts for multi-factor authentication (MFA). Support is
+experimental. Panasonic's MFA page is Auth0's classic *Guardian* page; the library now
+drives the Guardian API directly for authenticator app (TOTP) and SMS codes. Push
+notifications and e-mail codes are not supported yet.
+
+```python
+from aioaquarea import AuthenticationError, AuthenticationErrorCodes
+
+try:
+    await client.login()
+except AuthenticationError as err:
+    if err.error_code != AuthenticationErrorCodes.MFA_REQUIRED:
+        raise
+    challenge = await client.start_mfa()  # sends the SMS for an SMS factor
+    print(challenge.factor, challenge.destination)  # e.g. "sms", "***67" (masked)
+    await client.complete_mfa(input("Code: "))  # raises MFA_REQUIRED on a wrong code
+```
+
+The probe script below helps test this against a real account. It runs on your own
+computer, asks for your Panasonic ID and password (the password is never a command
+line argument), and sends them only to Panasonic. If MFA is required it prints a
+sanitized description of the MFA page, starts the challenge (for SMS this sends the
+code), asks for the code and prints every step of the login. The output contains page
+structure, configuration key names, HTTP statuses and JSON key names only (no cookies,
+tokens, state values, e-mail addresses, phone numbers or codes), but look it over before
+pasting it into an issue.
+
+```bash
+pip install --force-reinstall "git+https://github.com/wpatrik14/aioaquarea@mfa-probe"
+curl -O https://raw.githubusercontent.com/wpatrik14/aioaquarea/mfa-probe/scripts/mfa_probe.py
+python mfa_probe.py
+```
+
+(Or clone the repository and run `python scripts/mfa_probe.py` after installing.) The
+script imports the installed `aioaquarea` package, so the `pip install` step is required.

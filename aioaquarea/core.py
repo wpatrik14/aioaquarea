@@ -38,6 +38,7 @@ from .decorators import auth_required
 from .device_control import AquareaDeviceControl
 from .device_manager import DeviceManager
 from .entities import DeviceImpl
+from .mfa_guardian import MfaChallenge, MfaStep
 from .statistics import Consumption, DateType
 
 _LOGGER = logging.getLogger(__name__)
@@ -231,12 +232,51 @@ class AquareaClient:  # Renamed Client to AquareaClient
                 else:
                     _LOGGER.error("Missing User name and/or password, cannot login")
 
-        self._last_login = dt.datetime.now()
         if self._environment is not AquareaEnvironment.DEMO:
-            self._api_client.access_token = self._settings.access_token
-            self._api_client.token_expiration = dt.datetime.fromtimestamp(
-                self._settings.expires_at, tz=dt.timezone.utc
-            )
+            self._apply_login_result()
+        else:
+            self._last_login = dt.datetime.now()
+
+    def _apply_login_result(self) -> None:
+        self._last_login = dt.datetime.now()
+        self._api_client.access_token = self._settings.access_token
+        self._api_client.token_expiration = dt.datetime.fromtimestamp(
+            self._settings.expires_at, tz=dt.timezone.utc
+        )
+
+    async def start_mfa(self) -> MfaChallenge:
+        """EXPERIMENTAL: start the MFA challenge after ``login`` raised ``MFA_REQUIRED``.
+
+        Returns the factor (``"sms"``, ``"otp"``, ``"push"``, ``"email"`` or
+        ``"unknown"``) and a masked destination. For SMS this sends the code.
+        Not affected by the login failure cooldown.
+        """
+        async with self._login_lock:
+            return await self._authenticator.start_mfa()
+
+    async def complete_mfa(self, code: str) -> None:
+        """EXPERIMENTAL: finish a login that raised ``MFA_REQUIRED`` with ``code``.
+
+        Supports Auth0 Guardian pages (TOTP, SMS after ``start_mfa``) and plain
+        code forms. Not blocked by the login cooldown; success resets it. A
+        wrong code raises ``MFA_REQUIRED`` and may be retried.
+        """
+        async with self._login_lock:
+            await self._authenticator.complete_mfa(code)
+            self._apply_login_result()
+            self._login_failures = 0
+            self._login_failure = None
+            self._login_retry_at = 0.0
+
+    @property
+    def mfa_description(self) -> str | None:
+        """Sanitized description of the last MFA page, if one was hit."""
+        return self._authenticator.mfa_description
+
+    @property
+    def mfa_steps(self) -> list[MfaStep]:
+        """Sanitized steps of the last MFA attempt (names, statuses, key names)."""
+        return list(self._authenticator.mfa_steps)
 
     @auth_required
     async def get_devices(self) -> list[DeviceInfo]:
