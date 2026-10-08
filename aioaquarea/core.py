@@ -38,6 +38,8 @@ from .decorators import auth_required
 from .device_control import AquareaDeviceControl
 from .device_manager import DeviceManager
 from .entities import DeviceImpl
+from .errors import AuthenticationError, AuthenticationErrorCodes
+from .mfa import MfaChallenge
 from .statistics import Consumption, DateType
 
 _LOGGER = logging.getLogger(__name__)
@@ -61,6 +63,8 @@ class AquareaClient:  # Renamed Client to AquareaClient
         logger: Optional[logging.Logger] = None,
         environment: AquareaEnvironment = AquareaEnvironment.PRODUCTION,
         device_direct: bool = True,
+        refresh_token: str | None = None,
+        mfa_send_code: bool = True,
     ):
         """
         Initializes a new instance of the `AquareaClient` class.
@@ -73,12 +77,21 @@ class AquareaClient:  # Renamed Client to AquareaClient
             logger (Optional[logging.Logger], optional): The logger instance. Defaults to None.
             environment (AquareaEnvironment, optional): The environment to use. Defaults to AquareaEnvironment.PRODUCTION.
             device_direct (bool, optional): Whether to use device direct mode. Defaults to True.
+            refresh_token (str, optional): A refresh token from an earlier login (see
+                ``refresh_token``). ``login`` tries it before the password, and with
+                it the username and password may be omitted.
+            mfa_send_code (bool, optional): Whether a login that needs SMS multi-factor
+                authentication texts the code right away. Set to False for background
+                logins that cannot ask the user for the code. Defaults to True.
 
         Raises:
-            ValueError: If the environment is set to PRODUCTION and username or password are not provided.
+            ValueError: If the environment is set to PRODUCTION and neither a username
+                and password nor a refresh token are provided.
         """
-        if environment == AquareaEnvironment.PRODUCTION and (
-            not username or not password
+        if (
+            environment == AquareaEnvironment.PRODUCTION
+            and not refresh_token
+            and (not username or not password)
         ):
             raise ValueError("Username and password must be provided")
 
@@ -110,6 +123,7 @@ class AquareaClient:  # Renamed Client to AquareaClient
             self._app_version,
             self._environment,
             self._logger,
+            mfa_send_code=mfa_send_code,
         )
         self._device_manager = DeviceManager(
             self, self._settings, self._app_version, self._logger
@@ -128,7 +142,7 @@ class AquareaClient:  # Renamed Client to AquareaClient
         self._settings.username = username
         self._settings.password = password
         self._settings.access_token = self._api_client.access_token
-        self._settings.refresh_token = None
+        self._settings.refresh_token = refresh_token or None
         self._settings.expires_at = None
         self._settings.scope = None
         self._settings.clientId = None
@@ -142,6 +156,21 @@ class AquareaClient:  # Renamed Client to AquareaClient
     def password(self) -> str | None:
         """Return the password."""
         return self._password
+
+    @property
+    def refresh_token(self) -> str | None:
+        """The current OAuth refresh token (a secret), if the login returned one.
+
+        Store it and pass it to the constructor to log in again without the
+        password or a multi-factor code. It can change on every token refresh
+        (rotation), so read it again after each login or refresh.
+        """
+        return self._settings.refresh_token
+
+    @property
+    def mfa_challenge(self) -> MfaChallenge | None:
+        """The pending multi-factor challenge, if a login is waiting for a code."""
+        return self._authenticator.mfa_challenge
 
     @property
     def is_refresh_login_enabled(self) -> bool:
@@ -229,14 +258,54 @@ class AquareaClient:  # Renamed Client to AquareaClient
                         self._username, self._password
                     )
                 else:
-                    _LOGGER.error("Missing User name and/or password, cannot login")
+                    raise AuthenticationError(
+                        AuthenticationErrorCodes.TOKEN_EXPIRED,
+                        "The refresh token was rejected and no password is available",
+                    )
 
-        self._last_login = dt.datetime.now()
         if self._environment is not AquareaEnvironment.DEMO:
-            self._api_client.access_token = self._settings.access_token
-            self._api_client.token_expiration = dt.datetime.fromtimestamp(
-                self._settings.expires_at, tz=dt.timezone.utc
-            )
+            self._apply_login_result()
+        else:
+            self._last_login = dt.datetime.now()
+
+    def _apply_login_result(self) -> None:
+        self._last_login = dt.datetime.now()
+        self._api_client.access_token = self._settings.access_token
+        self._api_client.token_expiration = dt.datetime.fromtimestamp(
+            self._settings.expires_at, tz=dt.timezone.utc
+        )
+
+    async def complete_mfa(self, code: str) -> None:
+        """Finish a login that raised ``MfaRequiredError`` using the MFA ``code``.
+
+        The code is the 6 digit code from the SMS or authenticator app (a
+        24 character recovery code works too). Afterwards the client is logged
+        in like after a normal login. Not blocked by the login failure
+        cooldown.
+
+        Raises ``AuthenticationError`` with code ``MFA_INVALID_CODE`` for a
+        wrong code (may be retried), ``MFA_EXPIRED`` when the MFA transaction
+        timed out (call ``login`` again) and ``API_ERROR`` for anything else.
+        """
+        async with self._login_lock:
+            try:
+                await self._authenticator.complete_mfa(code)
+            except AuthenticationError as err:
+                if err.error_code == AuthenticationErrorCodes.MFA_EXPIRED:
+                    # Let the next login start over instead of replaying the
+                    # cached MfaRequiredError.
+                    self._login_failure = None
+                    self._login_retry_at = 0.0
+                raise
+            self._apply_login_result()
+            self._login_failures = 0
+            self._login_failure = None
+            self._login_retry_at = 0.0
+
+    async def resend_mfa_code(self) -> MfaChallenge:
+        """Text the SMS code again (SMS factor only); returns the challenge."""
+        async with self._login_lock:
+            return await self._authenticator.resend_mfa_code()
 
     @auth_required
     async def get_devices(self) -> list[DeviceInfo]:

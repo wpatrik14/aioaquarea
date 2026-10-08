@@ -100,8 +100,9 @@ def mock_password_flow(
     else:
         location = f"{REDIRECT_URI}?code={AUTH_CODE}&state={STATE}"
     m.get(URL_RESUME, status=302, headers={"Location": location})
-    m.post(URL_TOKEN, payload=token_body())
-    m.post(URL_ACC_LOGIN, payload={"clientId": CLIENT_ID})
+    if not mfa:  # an MFA login gets its token only after complete_mfa
+        m.post(URL_TOKEN, payload=token_body())
+        m.post(URL_ACC_LOGIN, payload={"clientId": CLIENT_ID})
 
 
 def mock_refresh_flow(m: aioresponses, *, status: int = 200, rotate: bool = True):

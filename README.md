@@ -20,7 +20,7 @@ Don't install it next to the original `aioaquarea` package: both provide the `ai
 
 ## Status
 
-- **Multi-factor authentication:** accounts that get Panasonic's MFA challenge fail with `AuthenticationError` code `MFA_REQUIRED` instead of a confusing token error. Completing the challenge is in progress ([#7](https://github.com/wpatrik14/aioaquarea/pull/7)).
+- **Multi-factor authentication:** accounts with Panasonic's MFA (SMS or authenticator app code) are supported. `Client.login()` raises `MfaRequiredError` (an `AuthenticationError` with code `MFA_REQUIRED`) carrying an `MfaChallenge`; pass the code to `Client.complete_mfa()`. See [Multi-factor authentication](#multi-factor-authentication).
 - **Water pressure:** `Device.water_pressure` (bar), when the unit reports it.
 
 Bug reports and pull requests are welcome in this repository.
@@ -82,6 +82,25 @@ async def main():
         # The device can automatically refresh its data:
         await device.refresh_data()
 ```
+
+## Multi-factor authentication
+
+```python
+from aioaquarea import Client, MfaRequiredError
+
+client = Client(session, username, password)
+try:
+    await client.login()
+except MfaRequiredError as err:
+    challenge = err.challenge  # factor "sms" or "otp", masked destination, code_sent
+    # For SMS the code has been texted already; ask the user for the code, then:
+    await client.complete_mfa(code)  # logged in now, like after a normal login
+    # await client.resend_mfa_code()  # SMS only
+```
+
+`complete_mfa` raises `AuthenticationError` with code `MFA_INVALID_CODE` for a wrong code (retry with another one), `MFA_EXPIRED` when the MFA transaction timed out (call `login()` again) and `API_ERROR` (naming the step) for anything unexpected. Pages or factors that are not supported (for example push notifications) raise a plain `MFA_REQUIRED` error without a challenge. Pass `mfa_send_code=False` to the client for background logins that must not text a code.
+
+**Avoiding MFA on every login:** the login asks for the `offline_access` scope, so the token response normally carries a refresh token. Store `client.refresh_token` (a secret) and pass it as `Client(session, username, password, refresh_token=...)`; `login()` then refreshes the token without the password or an MFA code, and only falls back to the password (and MFA) when Panasonic rejects the refresh token. The refresh token can rotate, so read `client.refresh_token` again after each login.
 
 ## Acknowledgements
 
