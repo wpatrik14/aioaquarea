@@ -100,7 +100,7 @@ except MfaRequiredError as err:
 
 `complete_mfa` raises `AuthenticationError` with code `MFA_INVALID_CODE` for a wrong code (retry with another one), `MFA_EXPIRED` when the MFA transaction timed out (call `login()` again) and `API_ERROR` (naming the step) for anything unexpected. Pages or factors that are not supported (for example push notifications) raise a plain `MFA_REQUIRED` error without a challenge. Pass `mfa_send_code=False` to the client for background logins that must not text a code.
 
-**Avoiding MFA on every login:** the login asks for the `offline_access` scope, so the token response normally carries a refresh token. Store `client.refresh_token` (a secret) and pass it as `Client(session, username, password, refresh_token=...)`; `login()` then refreshes the token without the password or an MFA code, and only falls back to the password (and MFA) when Panasonic rejects the refresh token. The refresh token can rotate, so read `client.refresh_token` again after each login.
+**Avoiding MFA on every login:** the login asks for the `offline_access` scope, so the token response normally carries a refresh token. Store `client.refresh_token` (a secret) and pass it as `Client(session, username, password, refresh_token=...)`; `login()` then refreshes the token without the password or an MFA code, and only falls back to the password (and MFA) when Panasonic rejects the refresh token. The refresh token can rotate: pass `refresh_token_callback=` (a plain function taking the new token) to be told whenever a login or refresh returned a different one.
 
 ## Acknowledgements
 

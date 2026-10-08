@@ -6,7 +6,7 @@ import asyncio
 import datetime as dt
 import logging
 import time
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 import aiohttp
 
@@ -65,6 +65,7 @@ class AquareaClient:  # Renamed Client to AquareaClient
         device_direct: bool = True,
         refresh_token: str | None = None,
         mfa_send_code: bool = True,
+        refresh_token_callback: Callable[[str], object] | None = None,
     ):
         """
         Initializes a new instance of the `AquareaClient` class.
@@ -83,6 +84,10 @@ class AquareaClient:  # Renamed Client to AquareaClient
             mfa_send_code (bool, optional): Whether a login that needs SMS multi-factor
                 authentication texts the code right away. Set to False for background
                 logins that cannot ask the user for the code. Defaults to True.
+            refresh_token_callback (Callable[[str], object], optional): Called with the
+                new refresh token whenever a login or token refresh returned a different
+                one than before (including the first one after a multi-factor login), so
+                it can be stored. Must be a plain (non-async) function; its errors are logged.
 
         Raises:
             ValueError: If the environment is set to PRODUCTION and neither a username
@@ -143,6 +148,8 @@ class AquareaClient:  # Renamed Client to AquareaClient
         self._settings.password = password
         self._settings.access_token = self._api_client.access_token
         self._settings.refresh_token = refresh_token or None
+        self._refresh_token_callback = refresh_token_callback
+        self._notified_refresh_token = refresh_token or None
         self._settings.expires_at = None
         self._settings.scope = None
         self._settings.clientId = None
@@ -274,6 +281,20 @@ class AquareaClient:  # Renamed Client to AquareaClient
         self._api_client.token_expiration = dt.datetime.fromtimestamp(
             self._settings.expires_at, tz=dt.timezone.utc
         )
+        token = self._settings.refresh_token
+        if (
+            token
+            and token != self._notified_refresh_token
+            and self._refresh_token_callback is not None
+        ):
+            try:
+                self._refresh_token_callback(token)
+            except Exception as err:  # a storing problem must not fail the login
+                self._logger.error(
+                    "refresh_token_callback failed (%s)", type(err).__name__
+                )
+            else:
+                self._notified_refresh_token = token
 
     async def complete_mfa(self, code: str) -> None:
         """Finish a login that raised ``MfaRequiredError`` using the MFA ``code``.

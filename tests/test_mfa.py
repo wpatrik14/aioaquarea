@@ -757,3 +757,55 @@ def test_error_classes():
     err = MfaRequiredError(MfaChallenge("sms", "***62"))
     assert err.error_code == Codes.MFA_REQUIRED
     assert "sms" in str(err) and "***62" not in str(err)
+
+
+async def test_refresh_token_callback(session, mocked, caplog):
+    stored: list[str] = []
+    client = Client(
+        session, USERNAME, PASSWORD, refresh_token_callback=stored.append
+    )
+    await login_to_mfa(client, mocked, factor="otp")
+    mock_post_back(mocked, {})
+    await client.complete_mfa(CODE)
+    assert stored == [REFRESH_TOKEN]  # the one an MFA login returned
+
+    mock_refresh_flow(mocked)  # rotates
+    client._last_login = client._last_login.min
+    await client.login()
+    assert stored == [REFRESH_TOKEN, NEW_REFRESH_TOKEN]
+
+    mock_refresh_flow(mocked, rotate=False)  # unchanged: no call
+    client._last_login = client._last_login.min
+    await client.login()
+    assert stored == [REFRESH_TOKEN, NEW_REFRESH_TOKEN]
+
+
+async def test_refresh_token_callback_not_called_for_the_given_token(session, mocked):
+    stored: list[str] = []
+    client = Client(
+        session, refresh_token=REFRESH_TOKEN, refresh_token_callback=stored.append
+    )
+    mock_refresh_flow(mocked, rotate=False)
+    await client.login()
+    assert stored == []
+
+
+async def test_refresh_token_callback_failure_does_not_fail_login(
+    session, mocked, caplog
+):
+    calls = []
+
+    def broken(token):
+        calls.append(token)
+        raise RuntimeError(token)
+
+    client = Client(session, USERNAME, PASSWORD, refresh_token_callback=broken)
+    mock_password_flow(mocked)
+    await client.login()
+    assert client.is_logged and calls == [REFRESH_TOKEN]
+    assert REFRESH_TOKEN not in caplog.text
+    # not marked as delivered: the next login offers it again
+    mock_refresh_flow(mocked, rotate=False)
+    client._last_login = client._last_login.min
+    await client.login()
+    assert calls == [REFRESH_TOKEN, REFRESH_TOKEN]
