@@ -440,7 +440,10 @@ def host_allowed(url: str, page_url: str) -> bool:
         return True
     if host.endswith(".panasonic.com"):
         return True
-    return bool(re.fullmatch(r"[a-z0-9-]+\.guardian(\.[a-z0-9-]+)?\.auth0\.com", host))
+    return bool(
+        re.fullmatch(r"[a-z0-9-]+\.guardian(\.[a-z0-9-]+)?\.auth0\.com", host)
+        or re.fullmatch(r"[a-z0-9-]+\.panasonic\.auth0\.com", host)
+    )
 
 
 class GuardianFlow:

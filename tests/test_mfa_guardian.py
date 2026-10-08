@@ -564,3 +564,14 @@ def test_empty_form_and_error_diagnostics():
     flow = GuardianFlow(None, config, user_agent="ua")
     flow.service_url = "not a url"
     assert not host_allowed(flow.service_url, MF_URL)
+
+
+def test_panasonic_auth0_private_cloud_host():
+    assert host_allowed("https://pdpauthglb-a1.panasonic.auth0.com", MF_URL)
+    for bad in (
+        "https://panasonic.auth0.com.evil.com",
+        "https://a.b.panasonic.auth0.com",
+        "https://evil-panasonic.auth0.com",
+        "http://pdpauthglb-a1.panasonic.auth0.com",
+    ):
+        assert not host_allowed(bad, MF_URL)
