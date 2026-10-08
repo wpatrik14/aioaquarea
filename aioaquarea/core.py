@@ -5,12 +5,18 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import logging
+import time
 from typing import List, Optional
 
 import aiohttp
 
 from .api_client import AquareaAPIClient
-from .auth import Authenticator, CCAppVersion, PanasonicSettings
+from .auth import (
+    Authenticator,
+    CCAppVersion,
+    PanasonicSettings,
+    RefreshTokenRejected,
+)
 from .const import AQUAREA_SERVICE_BASE, AQUAREA_SERVICE_DEMO_BASE, AquareaEnvironment
 from .consumption_manager import AquareaConsumptionManager
 from .data import (
@@ -36,13 +42,19 @@ from .statistics import Consumption, DateType
 
 _LOGGER = logging.getLogger(__name__)
 
+# Failed logins are remembered and re-raised without contacting Panasonic for a
+# cooldown that doubles per consecutive failure (every password login makes
+# Panasonic email the user).
+LOGIN_COOLDOWN_INITIAL = 60.0
+LOGIN_COOLDOWN_MAX = 900.0
+
 
 class AquareaClient:  # Renamed Client to AquareaClient
     """Aquarea Client."""
 
     def __init__(
         self,
-        session: aiohttp.ClientSession,
+        session: aiohttp.ClientSession | None = None,
         username: str | None = None,
         password: str | None = None,
         refresh_login: bool = True,
@@ -54,7 +66,7 @@ class AquareaClient:  # Renamed Client to AquareaClient
         Initializes a new instance of the `AquareaClient` class.
 
         Args:
-            session (aiohttp.ClientSession): The aiohttp client session.
+            session (aiohttp.ClientSession, optional): The aiohttp client session. If omitted the client creates (and closes) its own.
             username (str, optional): The username for authentication. Defaults to None.
             password (str, optional): The password for authentication. Defaults to None.
             refresh_login (bool, optional): Whether to refresh the login. Defaults to True.
@@ -71,12 +83,16 @@ class AquareaClient:  # Renamed Client to AquareaClient
             raise ValueError("Username and password must be provided")
 
         self._login_lock = asyncio.Lock()
-        self._sess = session
+        self._owns_session = session is None
+        self._sess = session if session is not None else aiohttp.ClientSession()
         self._username = username
         self._password = password
         self._refresh_login = refresh_login
         self._logger = logger or logging.getLogger("aioaquarea")
         self._last_login: dt.datetime = dt.datetime.min
+        self._login_failures = 0
+        self._login_failure: Exception | None = None
+        self._login_retry_at = 0.0  # time.monotonic() value
         self._environment = environment
         self._base_url = (
             AQUAREA_SERVICE_BASE
@@ -156,23 +172,58 @@ class AquareaClient:  # Renamed Client to AquareaClient
         return self._logger
 
     async def login(self) -> None:
-        """Login to Aquarea and stores a token in the session."""
+        """Login to Aquarea and stores a token in the session.
+
+        Tries the refresh token first and falls back to the password flow. A
+        failed login is remembered and re-raised for a cooldown period.
+        """
         intent = dt.datetime.now()
-        await self._login_lock.acquire()
-        try:
+        async with self._login_lock:
             if self._last_login > intent:
                 return
 
-            # Initialize app version on first login
-            await self._app_version.init()
+            if (
+                self._login_failure is not None
+                and time.monotonic() < self._login_retry_at
+            ):
+                raise self._login_failure
 
-            if self._environment is AquareaEnvironment.DEMO:
-                # In a real scenario, this would be handled by the Authenticator
-                _ = await self._api_client.request("GET", "", referer=self._base_url)
-                self._api_client.token_expiration = dt.datetime.astimezone(
-                    dt.datetime.utcnow(), tz=dt.timezone.utc
-                ) + dt.timedelta(days=1)
-            else:
+            try:
+                await self._do_login()
+            except Exception as err:
+                self._login_failures += 1
+                cooldown = min(
+                    LOGIN_COOLDOWN_INITIAL * 2 ** (self._login_failures - 1),
+                    LOGIN_COOLDOWN_MAX,
+                )
+                self._login_failure = err
+                self._login_retry_at = time.monotonic() + cooldown
+                raise
+
+            self._login_failures = 0
+            self._login_failure = None
+            self._login_retry_at = 0.0
+
+    async def _do_login(self) -> None:
+        # Initialize app version on first login
+        await self._app_version.init()
+
+        if self._environment is AquareaEnvironment.DEMO:
+            # In a real scenario, this would be handled by the Authenticator
+            _ = await self._api_client.request("GET", "", referer=self._base_url)
+            self._api_client.token_expiration = dt.datetime.now(
+                dt.timezone.utc
+            ) + dt.timedelta(days=1)
+        else:
+            refreshed = False
+            if self._settings.refresh_token:
+                try:
+                    await self._authenticator.refresh_token()
+                    refreshed = True
+                except RefreshTokenRejected:
+                    self._logger.debug("Refresh token rejected, using password login")
+                    self._settings.refresh_token = None
+            if not refreshed:
                 if self._username and self._password:
                     await self._authenticator.authenticate(
                         self._username, self._password
@@ -180,14 +231,12 @@ class AquareaClient:  # Renamed Client to AquareaClient
                 else:
                     _LOGGER.error("Missing User name and/or password, cannot login")
 
-            self._last_login = dt.datetime.now()
+        self._last_login = dt.datetime.now()
+        if self._environment is not AquareaEnvironment.DEMO:
             self._api_client.access_token = self._settings.access_token
             self._api_client.token_expiration = dt.datetime.fromtimestamp(
                 self._settings.expires_at, tz=dt.timezone.utc
             )
-            # Removed await self._device_manager.get_groups() as it's not a public method and device fetching handles it.
-        finally:
-            self._login_lock.release()
 
     @auth_required
     async def get_devices(self) -> list[DeviceInfo]:
@@ -300,6 +349,7 @@ class AquareaClient:  # Renamed Client to AquareaClient
             long_id, special_status, zones
         )
 
+    @auth_required
     async def post_device_zone_heat_temperature(
         self, long_id: str, zone_id: int, temperature: int
     ) -> None:
@@ -308,6 +358,7 @@ class AquareaClient:  # Renamed Client to AquareaClient
             long_id, zone_id, temperature
         )
 
+    @auth_required
     async def post_device_zone_cool_temperature(
         self, long_id: str, zone_id: int, temperature: int
     ) -> None:
@@ -367,6 +418,7 @@ class AquareaClient:  # Renamed Client to AquareaClient
             long_id, powerful_time
         )
 
+    @auth_required
     async def get_device_consumption(
         self, long_id: str, aggregation: DateType, date_input: str
     ) -> List[Consumption] | None:
@@ -376,5 +428,6 @@ class AquareaClient:  # Renamed Client to AquareaClient
         )
 
     async def close(self) -> None:
-        """Close the aiohttp client session."""
-        await self._sess.close()
+        """Close the aiohttp session, only if this client created it."""
+        if self._owns_session:
+            await self._sess.close()
