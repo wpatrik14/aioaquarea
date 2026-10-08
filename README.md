@@ -1,3 +1,11 @@
+> **This is the maintained fork of aioaquarea, published on PyPI as `aioaquarea-ng`.**
+> Install it with `pip install aioaquarea-ng`. The import name is unchanged: `import aioaquarea`.
+>
+> The original library was written by Carlos J. Aliaga ([cjaliaga/aioaquarea](https://github.com/cjaliaga/aioaquarea)).
+> The upstream repository is no longer maintained, and Panasonic has started enforcing multi-factor
+> authentication (MFA) on logins, which breaks the upstream release
+> (see [cjaliaga/aioaquarea#92](https://github.com/cjaliaga/aioaquarea/issues/92)). This fork continues the work.
+
 Aioaquarea
 ===================
 

@@ -8,10 +8,13 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "aioaquarea"
-version = "1.0.7"
+name = "aioaquarea-ng"
+version = "1.1.0"
 authors = [
   { name="Carlos J. Aliaga", email="dev@cjaliaga.net" },
+]
+maintainers = [
+  { name="wpatrik14" },
 ]
 description = "Asynchronous library to control Panasonic Aquarea devices"
 readme = "README.md"
@@ -29,8 +32,11 @@ dependencies = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/cjaliaga/aioaquarea"
-"Bug Tracker" = "https://github.com/cjaliaga/aioaquarea/issues"
+"Homepage" = "https://github.com/wpatrik14/aioaquarea"
+"Bug Tracker" = "https://github.com/wpatrik14/aioaquarea/issues"
+
+[tool.setuptools]
+packages = ["aioaquarea"]
 
 [tool.black]
 target-version = ["py39", "py310", "py311"]
