@@ -231,12 +231,31 @@ class AquareaClient:  # Renamed Client to AquareaClient
                 else:
                     _LOGGER.error("Missing User name and/or password, cannot login")
 
-        self._last_login = dt.datetime.now()
         if self._environment is not AquareaEnvironment.DEMO:
-            self._api_client.access_token = self._settings.access_token
-            self._api_client.token_expiration = dt.datetime.fromtimestamp(
-                self._settings.expires_at, tz=dt.timezone.utc
-            )
+            self._apply_login_result()
+        else:
+            self._last_login = dt.datetime.now()
+
+    def _apply_login_result(self) -> None:
+        self._last_login = dt.datetime.now()
+        self._api_client.access_token = self._settings.access_token
+        self._api_client.token_expiration = dt.datetime.fromtimestamp(
+            self._settings.expires_at, tz=dt.timezone.utc
+        )
+
+    async def complete_mfa(self, code: str) -> None:
+        """EXPERIMENTAL: finish a login that raised ``MFA_REQUIRED``.
+
+        Only works for a plain HTML code form; see ``Authenticator.complete_mfa``.
+        """
+        async with self._login_lock:
+            await self._authenticator.complete_mfa(code)
+            self._apply_login_result()
+
+    @property
+    def mfa_description(self) -> str | None:
+        """Sanitized description of the last MFA page, if one was hit."""
+        return self._authenticator.mfa_description
 
     @auth_required
     async def get_devices(self) -> list[DeviceInfo]:

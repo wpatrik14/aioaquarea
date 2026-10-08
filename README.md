@@ -89,3 +89,22 @@ The original library is by [Carlos J. Aliaga](https://github.com/cjaliaga) ([cja
 
 
 Big thanks to [ronhks](https://github.com/ronhks) for his awesome work on the [Panasonic Aquarea Smart Cloud integration with MQTT](https://github.com/ronhks/panasonic-aquarea-smart-cloud-mqtt).
+
+## Testing MFA login
+
+Panasonic now asks some accounts for multi-factor authentication (MFA). Support is
+experimental; this probe helps find out what Panasonic's MFA page looks like and whether
+a plain code form can be completed. It runs on your own computer, asks for your Panasonic
+ID and password (the password is never a command line argument), and sends them only to
+Panasonic. The output contains page structure only (no cookies, tokens, state values,
+e-mail addresses or input values), but look it over before pasting it into an issue.
+
+```bash
+pip install "git+https://github.com/wpatrik14/aioaquarea@mfa-probe"
+curl -O https://raw.githubusercontent.com/wpatrik14/aioaquarea/mfa-probe/scripts/mfa_probe.py
+python mfa_probe.py
+```
+
+(Or clone the repository and run `python scripts/mfa_probe.py` after installing.) The
+script imports the installed `aioaquarea` package, so the `pip install` step is required.
+If you get an MFA prompt, type the code Panasonic sent you when asked.

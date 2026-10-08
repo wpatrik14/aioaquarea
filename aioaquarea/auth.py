@@ -24,8 +24,10 @@ from .const import (
     AquareaEnvironment,
 )
 from .errors import AuthenticationError, AuthenticationErrorCodes
+from .mfa import MAX_REDIRECTS, describe_response, find_code_form, unsupported_reason
 
 _LOGGER = logging.getLogger(__name__)
+_MFA_LOGGER = logging.getLogger("aioaquarea.mfa")
 
 
 class PanasonicSettings:
@@ -264,11 +266,17 @@ class Authenticator:
         self._app_version = app_version
         self._environment = environment
         self._logger = logger
+        self._code_verifier: str | None = None
+        self._mfa_url: str | None = None
+        self.mfa_description: str | None = None
 
     async def authenticate(self, username: str, password: str):
         self._sess.cookie_jar.clear_domain("authglb.digital.panasonic.com")
+        self._mfa_url = None
+        self.mfa_description = None
         # generate initial state and code_challenge
         code_verifier = generate_random_string(43)
+        self._code_verifier = code_verifier
 
         code_challenge = (
             base64.urlsafe_b64encode(
@@ -289,7 +297,7 @@ class Authenticator:
                 authorization_response, "Location", "code"
             )
             if code is None:
-                raise_missing_code(authorization_redirect)
+                await self._missing_code(authorization_redirect)
         else:
             code = await self._login(authorization_response, username, password)
 
@@ -469,8 +477,123 @@ class Authenticator:
             response, "Location", "code"
         )
         if code is None:
-            raise_missing_code(location)
+            await self._missing_code(location)
         return code
+
+    async def _missing_code(self, location: str):
+        """Remember the MFA page (if any), then raise like ``raise_missing_code``."""
+        path = urllib.parse.urlparse(location).path
+        if path.lstrip("/").startswith("mf"):
+            self._mfa_url = urllib.parse.urljoin(BASE_PATH_AUTH + "/", location)
+            try:
+                self.mfa_description = await self._describe_mfa_page()
+            except Exception as err:  # diagnostics must never change the error
+                _MFA_LOGGER.debug("Could not describe MFA page: %s", type(err).__name__)
+        raise_missing_code(location)
+
+    async def _fetch_hops(self, url: str):
+        """GET ``url`` following redirects manually; return one tuple per hop."""
+        hops = []
+        for _ in range(MAX_REDIRECTS + 1):
+            async with self._sess.get(
+                url,
+                headers={"User-Agent": AUTH_BROWSER_USER_AGENT},
+                allow_redirects=False,
+            ) as response:
+                body = await response.text() if response.status == 200 else ""
+                location = response.headers.get("Location")
+                hops.append(
+                    (url, response.status, location, response.content_type, body)
+                )
+            if not location or location.startswith(REDIRECT_URI):
+                break
+            url = urllib.parse.urljoin(url, location)
+        return hops
+
+    async def _describe_mfa_page(self) -> str:
+        hops = await self._fetch_hops(self._mfa_url)
+        parts = []
+        for n, (_, status, location, ctype, body) in enumerate(hops, 1):
+            text = describe_response(status, location, ctype, body)
+            parts.append(f"hop {n}: " + text.replace("\n", "\n  "))
+        description = "\n".join(parts)
+        _MFA_LOGGER.debug("MFA page structure (sanitized):\n%s", description)
+        return description
+
+    async def complete_mfa(self, code: str):
+        """EXPERIMENTAL: finish a login that stopped at Panasonic's MFA page.
+
+        Must be called after ``authenticate`` raised ``MFA_REQUIRED``. Only
+        plain HTML forms with a code-like input are supported; anything else
+        (for example a Guardian widget) raises ``MFA_REQUIRED`` with a short
+        sanitized reason. The behaviour may change or be removed.
+        """
+        if not self._mfa_url or not self._code_verifier:
+            raise AuthenticationError(
+                AuthenticationErrorCodes.MFA_REQUIRED,
+                "No pending MFA login; call authenticate first",
+            )
+        hops = await self._fetch_hops(self._mfa_url)
+        page_url, status, _, _, body = hops[-1]
+        form = find_code_form(body, page_url) if status == 200 else None
+        if form is None:
+            raise AuthenticationError(
+                AuthenticationErrorCodes.MFA_REQUIRED, unsupported_reason(body)
+            )
+        if (
+            urllib.parse.urlparse(form.action).netloc
+            != urllib.parse.urlparse(BASE_PATH_AUTH).netloc
+        ):
+            raise AuthenticationError(
+                AuthenticationErrorCodes.MFA_REQUIRED,
+                "unsupported MFA page: form posts to another host",
+            )
+
+        data = dict(form.fields)
+        data[form.code_field] = code
+        url, method = form.action, "post"
+        for _ in range(MAX_REDIRECTS + 3):
+            async with self._sess.request(
+                method,
+                url,
+                data=data if method == "post" else None,
+                headers={"User-Agent": AUTH_BROWSER_USER_AGENT},
+                allow_redirects=False,
+            ) as response:
+                location = response.headers.get("Location")
+                status = response.status
+                resp_body = await response.text() if status == 200 else ""
+                ctype = response.content_type
+            if location is None:
+                _MFA_LOGGER.debug(
+                    "MFA submit ended without redirect:\n%s",
+                    describe_response(status, None, ctype, resp_body),
+                )
+                raise AuthenticationError(
+                    AuthenticationErrorCodes.MFA_REQUIRED,
+                    f"MFA code not accepted or unexpected response (status {status})",
+                )
+            if location.startswith(REDIRECT_URI):
+                auth_code = urllib.parse.parse_qs(
+                    urllib.parse.urlparse(location).query
+                ).get("code", [None])[0]
+                if auth_code is None:
+                    raise AuthenticationError(
+                        AuthenticationErrorCodes.MFA_REQUIRED,
+                        "MFA redirect did not contain an authorization code",
+                    )
+                break
+            url, method, data = urllib.parse.urljoin(url, location), "get", None
+        else:
+            raise AuthenticationError(
+                AuthenticationErrorCodes.MFA_REQUIRED,
+                "too many redirects after MFA code",
+            )
+
+        await self._request_new_token(auth_code, self._code_verifier)
+        await self._retrieve_client_acc()
+        self._mfa_url = None
+        self._code_verifier = None
 
     async def _request_new_token(self, code, code_verifier):
         self._logger.debug("Requesting a new token")
