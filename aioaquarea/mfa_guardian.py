@@ -48,6 +48,7 @@ FACTOR_SMS = "sms"
 FACTOR_OTP = "otp"
 FACTOR_PUSH = "push"
 FACTOR_EMAIL = "email"
+FACTOR_VOICE = "voice"
 FACTOR_UNKNOWN = "unknown"
 
 # Normalized config key (lower case, letters and digits only) -> role.
@@ -83,6 +84,7 @@ _JWT_RE = re.compile(r"eyJ[\w-]{5,}\.eyJ[\w-]{5,}\.[\w-]*")
 _ATOB_RE = re.compile(r"""atob\(\s*["']([A-Za-z0-9+/=_-]{16,})["']\s*\)""")
 _PATH_LITERAL_RE = re.compile(r"""["'`](/[A-Za-z0-9_\-./]{1,80})(?:[?#][^"'`]*)?["'`]""")
 _ERROR_CODE_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,40}$")
+_ENUM_RE = re.compile(r"^[a-z0-9_.-]{1,40}$")
 _LOADER_HINTS = (
     "requestToken",
     "postActionURL",
@@ -401,14 +403,82 @@ def json_keys(data: Any) -> list[str]:
     return sorted(keys)
 
 
+def _factor_name(item: Any) -> Any:
+    """Factor name from a string or a dict with ``name``/``type``/``method``."""
+    if isinstance(item, dict):
+        for key in ("name", "type", "method"):
+            if isinstance(item.get(key), str):
+                return item[key]
+        return None
+    return item
+
+
+def _enum_value(value: Any) -> str | bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and _ENUM_RE.match(value):
+        return value
+    return "<other>"
+
+
+def _enum_list(value: Any) -> list[str | bool]:
+    if isinstance(value, (str, dict)):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    return [_enum_value(_factor_name(item)) for item in value][:20]
+
+
+def enum_summary(data: dict, account: dict) -> str:
+    """Enum-like values only (never phone numbers, tokens or free text)."""
+    parts = []
+    for label, source, names in (
+        ("device_account.methods", account, ("methods",)),
+        ("device_account.available_methods", account, ("available_methods", "availableMethods")),
+        (
+            "device_account.available_authenticator_types",
+            account,
+            ("available_authenticator_types", "availableAuthenticatorTypes"),
+        ),
+        (
+            "available_authentication_methods",
+            data,
+            ("available_authentication_methods", "availableAuthenticationMethods"),
+        ),
+        (
+            "available_enrollment_methods",
+            data,
+            ("available_enrollment_methods", "availableEnrollmentMethods"),
+        ),
+    ):
+        value = _get(source, *names)
+        if value is not None:
+            parts.append(f"{label}={_enum_list(value)}")
+    status = _get(account, "status")
+    if status is not None:
+        parts.append(f"device_account.status={_enum_value(status)}")
+    switches = _get(data, "feature_switches", "featureSwitches")
+    if isinstance(switches, dict):
+        flags = {
+            str(k): v
+            for k, v in sorted(switches.items(), key=lambda kv: str(kv[0]))
+            if isinstance(v, bool) and _ENUM_RE.match(str(k))
+        }
+        parts.append(f"feature_switches={flags}")
+    return " ".join(parts)
+
+
 def normalize_factor(name: Any) -> str | None:
+    name = _factor_name(name)
     if not isinstance(name, str):
         return None
     name = name.lower()
     if name in ("otp", "totp", "guardian-otp", "google-authenticator"):
         return FACTOR_OTP
-    if name in ("sms", "phone", "voice"):
+    if name in ("sms", "phone"):
         return FACTOR_SMS
+    if name == "voice":
+        return FACTOR_VOICE  # needs a different endpoint: unsupported
     if name in ("push", "guardian", "push-notification"):
         return FACTOR_PUSH
     if name == "email":
@@ -424,6 +494,10 @@ def _get(data: dict, *names: str) -> Any:
         if name in data:
             return data[name]
     return None
+
+
+def is_success(status: int | None) -> bool:
+    return status is not None and 200 <= status < 300
 
 
 def _mfa_error(message: str) -> AuthenticationError:
@@ -534,7 +608,7 @@ class GuardianFlow:
         status, data = await self._api(
             "api/start-flow", request_token, {"state_transport": "polling"}
         )
-        if status != 200 or not isinstance(data, dict):
+        if not is_success(status) or not isinstance(data, dict):
             raise _mfa_error(
                 f"MFA start-flow failed (status {status}){self._error_detail(data)}"
             )
@@ -550,11 +624,14 @@ class GuardianFlow:
         if not isinstance(account, dict):
             account = {}
         raw = (
-            _get(account, "available_authenticator_types", "availableAuthenticatorTypes")
-            or _get(account, "methods")
+            _get(account, "methods")
+            or _get(account, "available_methods", "availableMethods")
             or _get(data, "available_authentication_methods", "availableAuthenticationMethods")
             or []
         )
+        enums = enum_summary(data, account)
+        if enums:
+            self._step("enums", note=enums)
         factors: list[str] = []
         for item in raw if isinstance(raw, list) else []:
             factor = normalize_factor(item)
@@ -569,7 +646,7 @@ class GuardianFlow:
 
         if factor == FACTOR_SMS:
             status, data = await self._api("api/send-sms", tx_token, None)
-            if status not in (200, 201, 202, 204):
+            if not is_success(status):
                 raise _mfa_error(
                     f"MFA send-sms failed (status {status}){self._error_detail(data)}"
                 )
@@ -596,7 +673,7 @@ class GuardianFlow:
         status, data = await self._api(path, self._tx_token, body)
         if status == 401 and isinstance(data, dict) and "expired" in json.dumps(data).lower():
             raise _mfa_error("MFA request expired; log in again")
-        if status >= 400:
+        if not is_success(status):
             raise _mfa_error(
                 f"MFA code not accepted (status {status}){self._error_detail(data)}"
             )
@@ -611,7 +688,7 @@ class GuardianFlow:
             status, data = await self._api("api/transaction-state", self._tx_token, None)
             if status == 429:
                 continue
-            if status != 200 or not isinstance(data, dict):
+            if not is_success(status) or not isinstance(data, dict):
                 raise _mfa_error(
                     f"MFA transaction-state failed (status {status}){self._error_detail(data)}"
                 )

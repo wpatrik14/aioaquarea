@@ -16,6 +16,7 @@ from aioaquarea.mfa_guardian import (
     GuardianConfig,
     GuardianFlow,
     config_summary,
+    enum_summary,
     host_allowed,
     jwt_expired,
     mask_destination,
@@ -329,6 +330,85 @@ async def test_missing_config_gives_clear_error(client, mocked):
     assert "guardian config without request token" in exc.value.error_message
     with pytest.raises(AuthenticationError, match="without request token"):
         await client.complete_mfa("123456")
+
+
+REAL_SHAPE = {
+    "available_authentication_methods": [{"name": "otp"}, "sms"],
+    "available_enrollment_methods": [{"type": "otp"}, "sms"],
+    "device_account": {
+        "available_authenticator_types": ["otp"],
+        "available_methods": ["otp"],
+        "methods": ["otp"],
+        "push_notifications": {"enabled": False},
+        "status": "confirmed",
+    },
+    "feature_switches": {"mfa_app": True, "mfa_sms": False},
+    "transaction_token": TX_TOKEN,
+}
+
+
+def real_shape(methods, **extra):
+    body = json.loads(json.dumps(REAL_SHAPE))
+    body["device_account"]["methods"] = methods
+    body["device_account"].update(extra)
+    return body
+
+
+async def test_start_flow_201_totp(client, mocked):
+    await login_to_mfa(client, mocked)
+    mocked.post(START_FLOW, status=201, payload=real_shape(["otp"]))
+    challenge = await client.start_mfa()
+    assert challenge.factor == "otp" and not challenge.code_sent
+    joined = "\n".join(str(s) for s in client.mfa_steps)
+    assert "start-flow: status=201" in joined
+    assert "device_account.methods=['otp']" in joined
+    assert "device_account.status=confirmed" in joined
+    assert "feature_switches={'mfa_app': True, 'mfa_sms': False}" in joined
+    assert "available_authentication_methods=['otp', 'sms']" in joined
+    assert "available_enrollment_methods=['otp', 'sms']" in joined
+
+
+async def test_start_flow_201_sms_masks_phone(client, mocked):
+    await login_to_mfa(client, mocked)
+    rec = Recorder()
+    mocked.post(
+        START_FLOW,
+        callback=rec.cb(real_shape(["sms"], phone_number=PHONE, status="<Weird Value>"), 201),
+    )
+    mocked.post(SEND_SMS, callback=rec.cb(status=202))
+    challenge = await client.start_mfa()
+    assert challenge.factor == "sms" and challenge.code_sent
+    assert challenge.destination == "***67"
+    assert [c[0].rsplit("/", 1)[1] for c in rec.calls] == ["start-flow", "send-sms"]
+    joined = "\n".join(str(s) for s in client.mfa_steps)
+    assert "device_account.status=<other>" in joined
+    enums = next(str(x) for x in client.mfa_steps if x.name == "enums")
+    assert "Weird" not in joined and PHONE not in joined and "phone" not in enums
+    assert_no_secrets(joined)
+
+
+def test_factor_detection_fallbacks():
+    assert normalize_factor({"type": "TOTP"}) == "otp"
+    assert normalize_factor({"nothing": 1}) is None
+    assert normalize_factor("voice") == "voice"
+    data = {
+        "available_authentication_methods": "otp",
+        "feature_switches": {"mfa_app": True, "x": "str", "BAD KEY": True},
+    }
+    out = enum_summary(data, {"available_methods": [{"name": "UPPER"}, 5, True]})
+    assert "available_methods=['<other>', '<other>', True]" in out
+    assert "available_authentication_methods=['otp']" in out
+    assert "feature_switches={'mfa_app': True}" in out
+    assert enum_summary({}, {}) == ""
+
+
+async def test_available_methods_fallback_and_voice_unsupported(client, mocked):
+    await login_to_mfa(client, mocked)
+    body = real_shape([])
+    body["device_account"]["available_methods"] = ["voice"]
+    mocked.post(START_FLOW, status=201, payload=body)
+    with pytest.raises(AuthenticationError, match="unsupported MFA factor: voice"):
+        await client.start_mfa()
 
 
 async def test_push_is_unsupported(client, mocked):
