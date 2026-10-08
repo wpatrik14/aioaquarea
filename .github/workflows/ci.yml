@@ -37,11 +37,7 @@ jobs:
             pip install -e . pytest pytest-asyncio aioresponses pytest-cov
           fi
       - name: Run tests
-        env:
-          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
-        run: |
-          # Exit code 5 = no tests collected; tolerated until tests land
-          python -m pytest -q -p pytest_asyncio -p pytest_cov --cov=aioaquarea --cov-report=term-missing || [ $? -eq 5 ]
+        run: python -m pytest -q --cov=aioaquarea --cov-report=term-missing
 
   build:
     runs-on: ubuntu-latest
