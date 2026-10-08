@@ -6,7 +6,7 @@ import pytest
 from aioaquarea.auth import Authenticator, CCAppVersion, PanasonicSettings
 from aioaquarea.const import BASE_PATH_AUTH, REDIRECT_URI, AquareaEnvironment
 from aioaquarea.errors import AuthenticationError, AuthenticationErrorCodes
-from aioaquarea.mfa import describe_response, find_code_form
+from aioaquarea.mfa import describe_response, find_code_form, redact_text
 
 GUARDIAN = """<html><head><title>Verify</title>
 <script src="https://cdn.example.com/js/guardian-widget.js?v=SECRET1"></script>
@@ -67,6 +67,73 @@ def test_find_code_form_plain():
 
 def test_find_code_form_guardian_none():
     assert find_code_form(GUARDIAN, BASE_PATH_AUTH + "/mf") is None
+
+
+UNIVERSAL = """<html><body><h1>Verify</h1>
+<form method="POST" action="/u/mfa-email-challenge?state=SECRETSTATE">
+<input type="hidden" name="state" value="SECRETSTATE">
+<input type="text" name="code" autocomplete="one-time-code">
+<button type="submit" name="action" value="pick-other">Try another way</button>
+<button type="submit" name="action" value="default">Continue</button>
+</form></body></html>"""
+
+
+def test_redact_examples():
+    assert redact_text("Code sent to user@example.com") == "Code sent to <email>"
+    assert redact_text("We sent a code to +36 30 123 4567") == "We sent a code to <number>"
+    assert redact_text("(06) 30-123-4567") == "<number>"
+    assert redact_text("Sent to p***@gmail.com") == "Sent to <masked>"
+    assert redact_text("Sent to +36 *** 4567") == "Sent to +36 <masked> <number>"
+    assert redact_text("Enter 6 digit code") == "Enter 6 digit code"
+    assert len(redact_text("x" * 200)) == 80
+
+
+def test_describe_redacts_title_and_headings():
+    html = (
+        "<html><head><title>Code for jane.doe@example.com</title></head>"
+        "<body><h1>We sent a code to +36 30 123 4567</h1>"
+        "<h2>or p***@gmail.com</h2></body></html>"
+    )
+    out = describe_response(200, None, "text/html", html)
+    print(out)
+    assert "title='Code for <email>'" in out
+    assert "We sent a code to <number>" in out and "or <masked>" in out
+    for secret in ("jane", "example.com", "123", "4567", "gmail"):
+        assert secret not in out
+
+
+def test_find_code_form_universal_login():
+    page = BASE_PATH_AUTH + "/u/mfa-email-challenge?state=SECRETSTATE"
+    form = find_code_form(UNIVERSAL, page)
+    assert form.action == BASE_PATH_AUTH + "/u/mfa-email-challenge?state=SECRETSTATE"
+    assert form.code_field == "code"
+    assert form.fields == {"state": "SECRETSTATE", "action": "default"}
+
+
+def test_complete_mfa_reuses_captured_page():
+    session = FakeSession(
+        [
+            FakeResponse(302, location="/u/mfa-email-challenge?state=x"),
+            FakeResponse(200, UNIVERSAL),
+            FakeResponse(302, location=REDIRECT_URI + "?code=C&state=x"),
+        ]
+    )
+    auth = make_auth(session)
+
+    async def noop(*a):
+        pass
+
+    auth._request_new_token = noop
+    auth._retrieve_client_acc = noop
+
+    async def flow():
+        await auth._describe_mfa_page()
+        await auth.complete_mfa("123456")
+
+    asyncio.run(flow())
+    methods = [r[0] for r in session.requests]
+    assert methods == ["get", "get", "post"]  # page fetched once, then POST
+    assert session.requests[2][2]["action"] == "default"
 
 
 class FakeResponse:

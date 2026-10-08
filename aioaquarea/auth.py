@@ -24,7 +24,13 @@ from .const import (
     AquareaEnvironment,
 )
 from .errors import AuthenticationError, AuthenticationErrorCodes
-from .mfa import MAX_REDIRECTS, describe_response, find_code_form, unsupported_reason
+from .mfa import (
+    MAX_REDIRECTS,
+    MfaForm,
+    describe_response,
+    find_code_form,
+    unsupported_reason,
+)
 
 _LOGGER = logging.getLogger(__name__)
 _MFA_LOGGER = logging.getLogger("aioaquarea.mfa")
@@ -268,11 +274,19 @@ class Authenticator:
         self._logger = logger
         self._code_verifier: str | None = None
         self._mfa_url: str | None = None
+        # In-memory only, never logged: the MFA page captured during login, so
+        # complete_mfa need not re-fetch it (a re-fetch may send a new code).
+        self._mfa_form: MfaForm | None = None
+        self._mfa_reason: str | None = None
+        self._mfa_captured = False
         self.mfa_description: str | None = None
 
     async def authenticate(self, username: str, password: str):
         self._sess.cookie_jar.clear_domain("authglb.digital.panasonic.com")
         self._mfa_url = None
+        self._mfa_form = None
+        self._mfa_reason = None
+        self._mfa_captured = False
         self.mfa_description = None
         # generate initial state and code_challenge
         code_verifier = generate_random_string(43)
@@ -483,7 +497,8 @@ class Authenticator:
     async def _missing_code(self, location: str):
         """Remember the MFA page (if any), then raise like ``raise_missing_code``."""
         path = urllib.parse.urlparse(location).path
-        if path.lstrip("/").startswith("mf"):
+        stripped = path.lstrip("/")
+        if stripped.startswith("mf") or stripped.startswith("u/mfa-"):
             self._mfa_url = urllib.parse.urljoin(BASE_PATH_AUTH + "/", location)
             try:
                 self.mfa_description = await self._describe_mfa_page()
@@ -508,10 +523,22 @@ class Authenticator:
             if not location or location.startswith(REDIRECT_URI):
                 break
             url = urllib.parse.urljoin(url, location)
+            if (
+                urllib.parse.urlparse(url).netloc
+                != urllib.parse.urlparse(BASE_PATH_AUTH).netloc
+            ):
+                break  # never follow (or send cookies) to another host
         return hops
+
+    def _capture_mfa_page(self, hops) -> None:
+        page_url, status, _, _, body = hops[-1]
+        self._mfa_form = find_code_form(body, page_url) if status == 200 else None
+        self._mfa_reason = unsupported_reason(body)
+        self._mfa_captured = True
 
     async def _describe_mfa_page(self) -> str:
         hops = await self._fetch_hops(self._mfa_url)
+        self._capture_mfa_page(hops)
         parts = []
         for n, (_, status, location, ctype, body) in enumerate(hops, 1):
             text = describe_response(status, location, ctype, body)
@@ -533,12 +560,14 @@ class Authenticator:
                 AuthenticationErrorCodes.MFA_REQUIRED,
                 "No pending MFA login; call authenticate first",
             )
-        hops = await self._fetch_hops(self._mfa_url)
-        page_url, status, _, _, body = hops[-1]
-        form = find_code_form(body, page_url) if status == 200 else None
+        if not self._mfa_captured:
+            # Nothing captured during login: fetch once as a fallback.
+            self._capture_mfa_page(await self._fetch_hops(self._mfa_url))
+        form = self._mfa_form
         if form is None:
             raise AuthenticationError(
-                AuthenticationErrorCodes.MFA_REQUIRED, unsupported_reason(body)
+                AuthenticationErrorCodes.MFA_REQUIRED,
+                self._mfa_reason or "unsupported MFA page",
             )
         if (
             urllib.parse.urlparse(form.action).netloc
@@ -593,6 +622,9 @@ class Authenticator:
         await self._request_new_token(auth_code, self._code_verifier)
         await self._retrieve_client_acc()
         self._mfa_url = None
+        self._mfa_form = None
+        self._mfa_reason = None
+        self._mfa_captured = False
         self._code_verifier = None
 
     async def _request_new_token(self, code, code_verifier):

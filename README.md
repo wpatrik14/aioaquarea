@@ -97,7 +97,8 @@ experimental; this probe helps find out what Panasonic's MFA page looks like and
 a plain code form can be completed. It runs on your own computer, asks for your Panasonic
 ID and password (the password is never a command line argument), and sends them only to
 Panasonic. The output contains page structure only (no cookies, tokens, state values,
-e-mail addresses or input values), but look it over before pasting it into an issue.
+e-mail addresses, phone numbers or input values; page texts are redacted and
+truncated, and all other library logging and tracebacks are suppressed), but look it over before pasting it into an issue.
 
 ```bash
 pip install "git+https://github.com/wpatrik14/aioaquarea@mfa-probe"

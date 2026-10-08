@@ -7,6 +7,7 @@ values, e-mail addresses, query string values or input values.
 
 from __future__ import annotations
 
+import re
 import urllib.parse
 from dataclasses import dataclass, field
 
@@ -18,6 +19,34 @@ MAX_REDIRECTS = 5
 CODE_INPUT_NAMES = frozenset({"code", "otp", "otpcode", "verificationcode"})
 
 KEYWORDS = ("guardian", "otp", "email", "sms", "totp", "recovery")
+
+
+MAX_TEXT = 80
+_EMAIL_RE = re.compile(r"[^\s<>\"']+@[^\s<>\"']+")
+_MASKED_RE = re.compile(r"\S*\*\S*")
+_NUMBER_RE = re.compile(r"\+?\(?\d[\d\s\-()]*\d")
+
+
+def _number_sub(match: re.Match) -> str:
+    text = match.group(0)
+    return "<number>" if sum(c.isdigit() for c in text) >= 4 else text
+
+
+def redact_text(text: str | None) -> str:
+    """Redact personal data from page text and truncate it to 80 characters.
+
+    E-mail-like tokens become ``<email>``, tokens containing ``*`` masking
+    become ``<masked>`` and phone-like or long (>= 4 digits) number sequences
+    become ``<number>``.
+    """
+    text = " ".join((text or "").split())
+    # Masked tokens first: "p***@gmail.com" is masked, not an e-mail.
+    text = _MASKED_RE.sub("<masked>", text)
+    text = _EMAIL_RE.sub("<email>", text)
+    text = _NUMBER_RE.sub(_number_sub, text)
+    if len(text) > MAX_TEXT:
+        text = text[: MAX_TEXT - 3] + "..."
+    return text
 
 
 def _path(url: str) -> str:
@@ -54,16 +83,19 @@ def describe_response(
         return "\n".join(lines)
 
     soup = BeautifulSoup(body, "html.parser")
-    title = soup.title.get_text(strip=True) if soup.title else ""
+    title = redact_text(soup.title.get_text(" ", strip=True)) if soup.title else ""
     lines.append(f"title={title!r}")
-    headings = [h.get_text(" ", strip=True) for h in soup.find_all(["h1", "h2"])]
+    headings = [
+        redact_text(h.get_text(" ", strip=True)) for h in soup.find_all(["h1", "h2"])
+    ][:10]
     lines.append(f"headings={headings}")
     forms = soup.find_all("form")
     lines.append(f"forms={len(forms)}")
     for form in forms:
         method = (form.get("method") or "get").lower()
         inputs = [
-            f"{i.get('name') or '(unnamed)'}:{(i.get('type') or 'text').lower()}"
+            f"{redact_text(i.get('name')) or '(unnamed)'}:"
+            f"{redact_text(i.get('type') or 'text').lower()}"
             for i in form.find_all(["input", "button", "select", "textarea"])
         ]
         lines.append(
@@ -87,6 +119,20 @@ class MfaForm:
     code_field: str = ""
 
 
+def _pick_submit(form) -> tuple[str, str] | None:
+    """Return exactly one named submit (name, value): prefer value ``default``."""
+    submits = []
+    for el in form.find_all(["input", "button"]):
+        name = el.get("name")
+        etype = (el.get("type") or ("submit" if el.name == "button" else "text")).lower()
+        if name and etype == "submit":
+            submits.append((name, el.get("value") or ""))
+    for candidate in submits:
+        if candidate[1].lower() == "default":
+            return candidate
+    return submits[0] if submits else None
+
+
 def find_code_form(body: str, page_url: str) -> MfaForm | None:
     """Find a POST form containing a code-like input, or None."""
     soup = BeautifulSoup(body or "", "html.parser")
@@ -105,17 +151,12 @@ def find_code_form(body: str, page_url: str) -> MfaForm | None:
         if code_input is None:
             continue
         fields: dict[str, str] = {}
-        submit_taken = False
         for i in form.find_all("input"):
-            name = i.get("name")
-            if not name:
-                continue
-            itype = (i.get("type") or "text").lower()
-            if itype == "hidden":
-                fields[name] = i.get("value") or ""
-            elif itype == "submit" and not submit_taken:
-                fields[name] = i.get("value") or ""
-                submit_taken = True
+            if i.get("name") and (i.get("type") or "").lower() == "hidden":
+                fields[i["name"]] = i.get("value") or ""
+        submit = _pick_submit(form)
+        if submit is not None:
+            fields[submit[0]] = submit[1]
         action = urllib.parse.urljoin(page_url, form.get("action") or page_url)
         return MfaForm(action=action, fields=fields, code_field=code_input["name"])
     return None
