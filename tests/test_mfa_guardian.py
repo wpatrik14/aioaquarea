@@ -20,6 +20,7 @@ from aioaquarea.mfa_guardian import (
     jwt_expired,
     mask_destination,
     normalize_factor,
+    normalize_url,
     parse_guardian_page,
 )
 
@@ -429,7 +430,7 @@ def test_parse_data_attributes_atob_and_jwt_scan():
     var tpl = {{ csrf: "{{{{ csrf }}}}" }};</script></body></html>"""
     config = parse_guardian_page(html, MF_URL)
     assert config.get("service_url") == "https://pdp.guardian.eu.auth0.com"
-    assert config.get("post_action") == "/mf/post"
+    assert config.get("post_action") == "https://authglb.digital.panasonic.com/mf/post"
     assert config.get("request_token") == REQUEST_TOKEN
     assert config.get("tenant") == "pdpauthglb-a1"
     assert config.get("csrf") is None  # template placeholder ignored
@@ -492,7 +493,7 @@ async def test_rejected_host_named_in_error(client, mocked):
         f'requestToken: "{REQUEST_TOKEN}", mfaServerUrl: "https://evil.example.com/mfa"'
     )
     await login_to_mfa(client, mocked, page, loader=None)
-    with pytest.raises(AuthenticationError, match=r"unexpected host \(evil.example.com\)"):
+    with pytest.raises(AuthenticationError, match=r"unexpected host \(evil.example.com, service_url_form=absolute\)"):
         await client.start_mfa()
 
 
@@ -523,3 +524,43 @@ def test_summary_mechanism_other_and_websocket():
     assert "uses polling transport" in text
     flow = GuardianFlow(None, config, user_agent="ua")
     assert any("websocket" in step.note for step in flow.steps)
+
+
+@pytest.mark.parametrize(
+    ("raw", "form"),
+    [
+        (r"https:\/\/authglb.digital.panasonic.com\/appliance-mfa", "escaped"),
+        (r"https:\u002F\u002Fauthglb.digital.panasonic.com\u002Fappliance-mfa", "escaped"),
+        (r"https:\x2F\x2Fauthglb.digital.panasonic.com\x2Fappliance-mfa", "escaped"),
+        ("https:&#x2F;&#x2F;authglb.digital.panasonic.com&#x2F;appliance-mfa", "escaped"),
+        ("https://authglb.digital.panasonic.com/appliance-mfa?a=1&amp;b=2", "escaped"),
+        ("/appliance-mfa", "relative"),
+        ("//authglb.digital.panasonic.com/appliance-mfa", "protocol-relative"),
+        ("https://authglb.digital.panasonic.com/appliance-mfa", "absolute"),
+    ],
+)
+def test_service_url_forms_normalized(raw, form):
+    config = GuardianConfig(page_url=MF_URL)
+    config.merge_text(f'serviceUrl: "{raw}"', "inline")
+    url = config.get("service_url")
+    assert url is not None
+    assert url.startswith("https://authglb.digital.panasonic.com/appliance-mfa")
+    assert config.url_forms["service_url"] == form
+    assert host_allowed(url, MF_URL)
+    assert f"service_url_form={form}" in config_summary(config)
+
+
+def test_attribute_url_normalized():
+    config = parse_guardian_page(
+        '<div data-service-url="/appliance-mfa" data-post-action="/mf?x=1"></div>', MF_URL
+    )
+    assert config.get("service_url") == "https://authglb.digital.panasonic.com/appliance-mfa"
+    assert config.url_forms["service_url"] == "relative"
+
+
+def test_empty_form_and_error_diagnostics():
+    assert normalize_url("  ", MF_URL) == ("", "empty")
+    config = GuardianConfig(page_url=MF_URL)
+    flow = GuardianFlow(None, config, user_agent="ua")
+    flow.service_url = "not a url"
+    assert not host_allowed(flow.service_url, MF_URL)

@@ -110,6 +110,44 @@ def _unescape(value: str) -> str:
     return html.unescape(value)
 
 
+_JS_ESCAPE_RE = re.compile(r"\\(?:x([0-9a-fA-F]{2})|u([0-9a-fA-F]{4})|(.))", re.S)
+URL_ROLES = frozenset({"service_url", "post_action"})
+
+
+def _js_unescape(value: str) -> str:
+    def repl(m: re.Match) -> str:
+        code = m.group(1) or m.group(2)
+        return chr(int(code, 16)) if code else m.group(3)
+
+    return _JS_ESCAPE_RE.sub(repl, value)
+
+
+def normalize_url(raw: str, page_url: str) -> tuple[str, str]:
+    """Decode JS/HTML escapes and resolve against the page; return (url, form).
+
+    ``form`` is ``escaped`` when decoding changed the value, otherwise
+    ``absolute``, ``protocol-relative``, ``relative`` or ``empty``.
+    """
+    value = raw.strip()
+    for _ in range(2):  # allow double-encoded values
+        decoded = html.unescape(_js_unescape(value)).strip()
+        if decoded == value:
+            break
+        value = decoded
+    value = value.strip()
+    if not value:
+        return "", "empty"
+    if value != raw.strip():
+        form = "escaped"
+    elif value.startswith("//"):
+        form = "protocol-relative"
+    elif value.startswith("/"):
+        form = "relative"
+    else:
+        form = "absolute"
+    return urllib.parse.urljoin(page_url, value), form
+
+
 def _decode_jwt_payload(token: str) -> dict | None:
     parts = token.split(".")
     if len(parts) < 2:
@@ -157,6 +195,7 @@ class GuardianConfig:
     values: dict[str, str] = field(default_factory=dict)  # role -> value
     sources: dict[str, str] = field(default_factory=dict)  # role -> where found
     seen_keys: set[str] = field(default_factory=set)  # all key names seen
+    url_forms: dict[str, str] = field(default_factory=dict)  # role -> raw URL form
     inline_scripts: int = 0
     loader_notes: list[str] = field(default_factory=list)
 
@@ -182,6 +221,9 @@ class GuardianConfig:
                 value = match.group("lit")
             else:
                 value = _unescape(match.group("val")).strip()
+            if role in URL_ROLES and match.group("val"):
+                value, form = normalize_url(match.group("val"), self.page_url)
+                self.url_forms[role] = form
             # Skip template placeholders and empty values.
             if not _plausible(role, value):
                 continue
@@ -201,8 +243,12 @@ class GuardianConfig:
                     continue
                 self.seen_keys.add(attr)
                 role = KEY_ALIASES.get(normalize_key(attr[5:]))
-                if role and role not in self.values and _plausible(role, value.strip()):
-                    self.values[role] = value.strip()
+                value = value.strip()
+                if role in URL_ROLES and value:
+                    value, form = normalize_url(value, self.page_url)
+                    self.url_forms[role] = form
+                if role and role not in self.values and _plausible(role, value):
+                    self.values[role] = value
                     self.sources[role] = "attr"
 
     def scan_jwt(self, text: str, source: str) -> None:
@@ -286,6 +332,8 @@ def config_summary(config: GuardianConfig) -> str:
             fields.append(f"service_host={parsed.scheme}://{parsed.netloc}")
         if post_action:
             fields.append(f"post_action_path={post_path}")
+        if service:
+            fields.append(f"service_url_form={config.url_forms.get('service_url', 'unknown')}")
         lines.append("  " + " ".join(fields))
     mechanism = config.get("state_checking_mechanism")
     if mechanism:
@@ -466,9 +514,11 @@ class GuardianFlow:
     async def start(self) -> MfaChallenge:
         """``start-flow``, pick the factor and send the SMS if it is an SMS factor."""
         if not host_allowed(self.service_url, self.config.page_url):
-            host = urllib.parse.urlparse(self.service_url).hostname or "?"
+            host = urllib.parse.urlparse(self.service_url).hostname or "(empty)"
+            form = self.config.url_forms.get("service_url", "unknown")
             raise _mfa_error(
-                f"unsupported MFA page: Guardian service on an unexpected host ({host})"
+                f"unsupported MFA page: Guardian service on an unexpected host "
+                f"({host}, service_url_form={form})"
             )
         request_token = self.config.get("request_token")
         if not request_token:
