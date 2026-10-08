@@ -24,7 +24,7 @@ from .data import (
     StatusDataMode,
     TankStatus,
 )
-from .errors import RequestFailedError  # Import RequestFailedError
+from .errors import AuthenticationError, InvalidData, RequestFailedError
 
 if TYPE_CHECKING:
     from .core import AquareaClient
@@ -74,7 +74,7 @@ class DeviceManager:
 
                     for device_raw in device_list:
                         if device_raw and device_raw.get("deviceType") == "2":
-                            _LOGGER.info(f"Raw device response: {device_raw}")
+                            _LOGGER.debug("Raw device response keys: %s", sorted(device_raw))
                             device_id = device_raw.get("deviceGuid")
                             device_name = device_raw.get("deviceName", "Unknown Device")
                             operation_mode = OperationMode(
@@ -128,8 +128,8 @@ class DeviceManager:
                                 zones,
                                 StatusDataMode.LIVE,  # Added status_data_mode
                             )
-                            _LOGGER.info(
-                                f"get_devices: Device {device_id} has_tank: {has_tank}, raw device_raw: {device_raw}"
+                            _LOGGER.debug(
+                                "get_devices: Device %s has_tank: %s", device_id, has_tank
                             )
                             self._device_indexer[device_id] = device_id
                             self._devices.append(device_info)
@@ -150,9 +150,13 @@ class DeviceManager:
                 throw_on_error=True,
             )
             json_response = await response.json()
-            self._logger.info(
-                f"get_device_status (live): Raw JSON response for device {device_info.device_id}: {json_response}"
+            self._logger.debug(
+                "get_device_status (live): response for device %s has keys %s",
+                device_info.device_id,
+                sorted(json_response) if isinstance(json_response, dict) else type(json_response).__name__,
             )
+        except AuthenticationError:
+            raise
         except Exception as e:
             self._logger.warning(
                 "Failed to get live status for device {}: {}".format(
@@ -172,11 +176,12 @@ class DeviceManager:
                     throw_on_error=True,
                 )
                 json_response = await response.json()
-                self._logger.info(
-                    "Successfully retrieved cached status for device {} after live data failure. Raw JSON: {}".format(
-                        device_info.device_id, json_response
-                    )
+                self._logger.debug(
+                    "Retrieved cached status for device %s after live data failure",
+                    device_info.device_id,
                 )
+            except AuthenticationError:
+                raise
             except Exception as e_cached:
                 self._logger.error(
                     "Failed to get cached status for device {}: {}".format(
@@ -192,68 +197,70 @@ class DeviceManager:
                 "Failed to retrieve device status after multiple attempts."
             )
 
-        device = json_response.get("status")
-        operation_mode_value = device.get("operationMode")
+        try:
+            device = json_response.get("status")
+            operation_mode_value = device.get("operationMode")
 
-        device_status = DeviceStatus(
-            long_id=device_info.device_id,  # Use device_info.long_id here
-            operation_status=OperationStatus(device.get("specialStatus")),
-            device_status=DeviceModeStatus(device.get("deiceStatus")),
-            temperature_outdoor=device.get("outdoorNow"),
-            operation_mode=(
-                ExtendedOperationMode.OFF
-                if operation_mode_value == 99
-                else ExtendedOperationMode(operation_mode_value)
-            ),
-            fault_status=[
-                FaultError(fault_status["errorMessage"], fault_status["errorCode"])
-                for fault_status in device.get("faultStatus", [])
-            ],
-            direction=DeviceDirection(device.get("direction")),
-            pump_duty=PumpDuty(device.get("pumpDuty")),
-            tank_status=(
-                [
-                    TankStatus(
-                        OperationStatus(
-                            device.get("tankStatus", {}).get("operationStatus")
+            device_status = DeviceStatus(
+                long_id=device_info.device_id,  # Use device_info.long_id here
+                operation_status=OperationStatus(device.get("specialStatus")),
+                device_status=DeviceModeStatus(device.get("deiceStatus")),
+                temperature_outdoor=device.get("outdoorNow"),
+                operation_mode=(
+                    ExtendedOperationMode.OFF
+                    if operation_mode_value == 99
+                    else ExtendedOperationMode(operation_mode_value)
+                ),
+                fault_status=[
+                    FaultError(fault_status["errorMessage"], fault_status["errorCode"])
+                    for fault_status in device.get("faultStatus", [])
+                ],
+                direction=DeviceDirection(device.get("direction")),
+                pump_duty=PumpDuty(device.get("pumpDuty")),
+                tank_status=(
+                    [
+                        TankStatus(
+                            OperationStatus(
+                                device.get("tankStatus", {}).get("operationStatus")
+                            ),
+                            device.get("tankStatus", {}).get("temperatureNow"),
+                            device.get("tankStatus", {}).get("heatMax"),
+                            device.get("tankStatus", {}).get("heatMin"),
+                            device.get("tankStatus", {}).get("heatSet"),
+                        )
+                    ]
+                    if device.get("tankStatus")
+                    else []
+                ),
+                zones=[
+                    DeviceZoneStatus(
+                        zone_id=zone_status.get("zoneId"),
+                        temperature=zone_status.get("temperatureNow"),
+                        operation_status=OperationStatus(
+                            zone_status.get("operationStatus")
                         ),
-                        device.get("tankStatus", {}).get("temperatureNow"),
-                        device.get("tankStatus", {}).get("heatMax"),
-                        device.get("tankStatus", {}).get("heatMin"),
-                        device.get("tankStatus", {}).get("heatSet"),
+                        heat_max=zone_status.get("heatMax"),
+                        heat_min=zone_status.get("heatMin"),
+                        heat_set=zone_status.get("heatSet"),
+                        cool_max=zone_status.get("coolMax"),
+                        cool_min=zone_status.get("coolMin"),
+                        cool_set=zone_status.get("coolSet"),
+                        comfort_cool=zone_status.get("comfortCool"),
+                        comfort_heat=zone_status.get("comfortHeat"),
+                        eco_cool=zone_status.get("ecoCool"),
+                        eco_heat=zone_status.get("ecoHeat"),
                     )
-                ]
-                if device.get("tankStatus")
-                else []
-            ),
-            zones=[
-                DeviceZoneStatus(
-                    zone_id=zone_status.get("zoneId"),
-                    temperature=zone_status.get("temperatureNow"),
-                    operation_status=OperationStatus(
-                        zone_status.get("operationStatus")
-                    ),
-                    heat_max=zone_status.get("heatMax"),
-                    heat_min=zone_status.get("heatMin"),
-                    heat_set=zone_status.get("heatSet"),
-                    cool_max=zone_status.get("coolMax"),
-                    cool_min=zone_status.get("coolMin"),
-                    cool_set=zone_status.get("coolSet"),
-                    comfort_cool=zone_status.get("comfortCool"),
-                    comfort_heat=zone_status.get("comfortHeat"),
-                    eco_cool=zone_status.get("ecoCool"),
-                    eco_heat=zone_status.get("ecoHeat"),
-                )
-                for zone_status in device.get("zoneStatus", [])
-                if isinstance(zone_status, dict)
-            ],
-            quiet_mode=QuietMode(device.get("quietMode", 0)),
-            force_dhw=ForceDHW(device.get("forceDHW", 0)),
-            force_heater=ForceHeater(device.get("forceHeater", 0)),
-            holiday_timer=HolidayTimer(device.get("holidayTimer", 0)),
-            powerful_time=PowerfulTime(device.get("powerful", 0)),
-            special_status=None,  # Simplified to None
-            water_pressure=device.get("waterPressure"),
-        )
-
-        return device_status
+                    for zone_status in device.get("zoneStatus", [])
+                    if isinstance(zone_status, dict)
+                ],
+                quiet_mode=QuietMode(device.get("quietMode", 0)),
+                force_dhw=ForceDHW(device.get("forceDHW", 0)),
+                force_heater=ForceHeater(device.get("forceHeater", 0)),
+                holiday_timer=HolidayTimer(device.get("holidayTimer", 0)),
+                powerful_time=PowerfulTime(device.get("powerful", 0)),
+                special_status=None,  # Simplified to None
+                water_pressure=device.get("waterPressure"),
+            )
+            return device_status
+        except (AttributeError, KeyError, TypeError, ValueError) as err:
+            raise InvalidData(json_response) from err
