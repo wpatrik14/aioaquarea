@@ -83,6 +83,7 @@ async def test_get_device_status_without_tank_and_off_mode(logged_client, mocked
     assert status.fault_status == []
     assert status.device_status == DeviceModeStatus.DEFROST
     assert status.water_pressure is None
+    assert status.operation_status == OperationStatus.OFF
 
 
 async def test_live_failure_falls_back_to_cached(logged_client, mocked):
@@ -150,3 +151,31 @@ async def test_status_logs_do_not_dump_payload(logged_client, mocked, caplog):
     assert "VERY-SPECIFIC-NAME" not in caplog.text
     assert "temperatureNow" not in caplog.text
     assert all(r.levelno <= logging.DEBUG for r in caplog.records if "aioaquarea.device_manager" in r.name)
+
+
+async def test_device_status_on_without_preset(logged_client, mocked):
+    """A zone heating with no eco/comfort preset (specialStatus 0) is on and heating."""
+    payload = load_fixture("device_status.json")
+    payload["status"]["specialStatus"] = 0
+    mocked.post(TRANSFER, payload=payload)
+    status = await logged_client.get_device_status(info())
+    assert status.operation_status == OperationStatus.ON
+
+
+async def test_device_status_on_with_only_tank(logged_client, mocked):
+    payload = load_fixture("device_status.json")
+    payload["status"]["specialStatus"] = 0
+    for zone in payload["status"]["zoneStatus"]:
+        zone["operationStatus"] = 0
+    mocked.post(TRANSFER, payload=payload)
+    status = await logged_client.get_device_status(info())
+    assert status.operation_status == OperationStatus.ON
+
+
+async def test_device_status_off_with_eco_preset(logged_client, mocked):
+    """specialStatus 1 (eco) must not make a device with everything off look on."""
+    payload = load_fixture("device_status_no_tank.json")
+    payload["status"]["specialStatus"] = 1
+    mocked.post(TRANSFER, payload=payload)
+    status = await logged_client.get_device_status(info())
+    assert status.operation_status == OperationStatus.OFF

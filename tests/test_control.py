@@ -227,10 +227,13 @@ async def test_consumption_auth_error_not_swallowed(logged_client, mocked):
 # ------------------------------------------------------------------- entities
 
 
-async def make_device(client, mocked, status_fixture="device_status.json", interval=None) -> Device:
+async def make_device(
+    client, mocked, status_fixture: str | dict = "device_status.json", interval=None
+) -> Device:
     Device._zones = {}  # class-level dict shared between instances
     mocked.get(f"{BASE}/device/group", payload=load_fixture("groups.json"))
-    mocked.post(TRANSFER, payload=load_fixture(status_fixture))
+    status = load_fixture(status_fixture) if isinstance(status_fixture, str) else status_fixture
+    mocked.post(TRANSFER, payload=status)
     if interval:
         mocked.post(TRANSFER, payload=load_fixture("consumption_month.json"))
     infos = await client.get_devices()
@@ -390,3 +393,28 @@ async def test_get_device_by_id(logged_client, mocked):
         await logged_client.get_device(device_id="missing")
     with pytest.raises(ValueError):
         await logged_client.get_device()
+
+
+@pytest.mark.parametrize("special_status", [0, 2])
+async def test_heating_reported_without_eco_preset(logged_client, mocked, special_status):
+    """A heating zone is HEATING whatever the preset (0 = none, 2 = comfort)."""
+    from aioaquarea.data import DeviceAction
+
+    payload = load_fixture("device_status.json")
+    payload["status"]["specialStatus"] = special_status
+    dev = await make_device(logged_client, mocked, payload)
+    assert dev.operation_status == OperationStatus.ON
+    assert dev.current_action == DeviceAction.HEATING
+
+
+async def test_turn_off_sent_without_eco_preset(logged_client, mocked):
+    """turn_off() must reach the API when the device runs without a preset."""
+    payload = load_fixture("device_status.json")
+    payload["status"]["specialStatus"] = 0
+    payload["status"]["faultStatus"] = []  # an error state would send OFF anyway
+    dev = await make_device(logged_client, mocked, payload)
+    mocked.post(TRANSFER, payload={}, repeat=True)
+    mocked.post(DEVICE_URL, payload={}, repeat=True)
+    before = len(sent(mocked))
+    await dev.turn_off()
+    assert len(sent(mocked)) > before
