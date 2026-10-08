@@ -41,7 +41,7 @@ jobs:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
         run: |
           # Exit code 5 = no tests collected; tolerated until tests land
-          python -m pytest -q --cov=aioaquarea --cov-report=term-missing || [ $? -eq 5 ]
+          python -m pytest -q -p pytest_asyncio -p pytest_cov --cov=aioaquarea --cov-report=term-missing || [ $? -eq 5 ]
 
   build:
     runs-on: ubuntu-latest
