@@ -1,0 +1,13 @@
+{
+  "status": {
+    "operationMode": 99,
+    "specialStatus": 0,
+    "deiceStatus": 1,
+    "outdoorNow": -3,
+    "pumpDuty": 0,
+    "direction": 0,
+    "zoneStatus": [
+      {"zoneId": 1, "operationStatus": 0, "temperatureNow": 20, "heatSet": 21, "heatMin": 15, "heatMax": 30}
+    ]
+  }
+}

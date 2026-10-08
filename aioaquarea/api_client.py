@@ -78,28 +78,53 @@ class AquareaAPIClient:
         else:
             # If external_url is not provided, join the base_url with the given url
             url = urllib.parse.urljoin(self._base_url, url)
-        resp = await self._sess.request(method, url, **kwargs)
+        # The body is read inside the context manager so the connection is
+        # released; callers can still use resp.json()/resp.text() afterwards
+        # because aiohttp caches the body.
+        async with self._sess.request(method, url, **kwargs) as resp:
+            await resp.read()
 
+        data = None
         if resp.content_type == "application/json":
-            data = await resp.json()
+            try:
+                data = await resp.json()
+            except ValueError:
+                data = None
 
             # let's check for access token and expiration time
-            if self._access_token and self.__contains_valid_token(data):
+            if (
+                isinstance(data, dict)
+                and self._access_token
+                and self.__contains_valid_token(data)
+            ):
                 self._access_token = data["accessToken"]["token"]
                 self._token_expiration = dt.datetime.strptime(
                     data["accessToken"]["expires"], "%Y-%m-%dT%H:%M:%S%z"
                 )
 
-            # Aquarea returns a 200 even if the request failed, we need to check the message property to see if it's an error
+        if throw_on_error:
+            # Aquarea may return a 200 even if the request failed, we need to check the message property to see if it's an error
             # Some errors just require to login again, so we raise a AuthenticationError in those known cases
-            if throw_on_error:
-                errors = await self.look_for_errors(data)
-                # If we have errors, let's look for authentication errors
-                for error in errors:
-                    if error.error_code in list(AuthenticationErrorCodes):
-                        raise AuthenticationError(error.error_code, error.error_message)
+            errors = await self.look_for_errors(data)
+            # If we have errors, let's look for authentication errors
+            for error in errors:
+                if isinstance(error, AuthenticationError):
+                    raise error
+                if error.error_code in list(AuthenticationErrorCodes):
+                    raise AuthenticationError(error.error_code, error.error_message)
 
-                    raise ApiError(error.error_code, error.error_message)
+                raise ApiError(error.error_code, error.error_message)
+
+            if not 200 <= resp.status < 300:
+                self._logger.debug("%s %s failed with status %s", method, urllib.parse.urlparse(url).path, resp.status)
+                if resp.status in (401, 403):
+                    raise AuthenticationError(
+                        AuthenticationErrorCodes.TOKEN_EXPIRED,
+                        f"Request rejected with status {resp.status}",
+                    )
+                raise ApiError(
+                    f"HTTP_{resp.status}", f"Unexpected HTTP status {resp.status}"
+                )
 
         return resp
 

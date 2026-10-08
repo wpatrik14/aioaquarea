@@ -66,14 +66,16 @@ class AquareaConsumptionManager:
                 ]
             else:
                 _LOGGER.warning(
-                    "No consumption data found for device %s, date %s, aggregation %s. Full response: %s",
+                    "No consumption data found for device %s, date %s, aggregation %s",
                     long_id,
                     date_input,
                     aggregation,
-                    consumption_data,
                 )
                 return None
-        except (ApiError, AuthenticationError) as ex:
+        except AuthenticationError:
+            # Let the caller (auth_required) re-login or surface the problem
+            raise
+        except ApiError as ex:
             _LOGGER.warning(
                 "Failed to get consumption data for device %s, date %s, aggregation %s: %s",
                 long_id,

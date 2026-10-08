@@ -225,7 +225,7 @@ class AquareaDeviceControl:
             },
         }
 
-        response = await self._api_client.request(
+        await self._api_client.request(
             "POST",
             "/remote/v1/app/common/transfer",
             headers={},

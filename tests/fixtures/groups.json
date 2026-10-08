@@ -1,0 +1,33 @@
+{
+  "groupList": [
+    {
+      "groupId": 1,
+      "deviceList": [
+        {
+          "deviceType": "2",
+          "deviceGuid": "009A2W0000000001",
+          "deviceName": "Aquarea",
+          "operationMode": 3,
+          "tankStatus": {"operationStatus": 1, "temperatureNow": 48},
+          "zoneStatus": [
+            {"zoneId": 1, "coolMin": 10, "coolMax": 20},
+            {"zoneId": 2}
+          ]
+        },
+        {"deviceType": "1", "deviceGuid": "AC-1", "deviceName": "Air conditioner"}
+      ]
+    },
+    {
+      "groupId": 2,
+      "deviceIdList": [
+        {
+          "deviceType": "2",
+          "deviceGuid": "009A2W0000000002",
+          "operationMode": 2,
+          "tankStatus": {},
+          "zoneStatus": [{"zoneId": 1}]
+        }
+      ]
+    }
+  ]
+}
