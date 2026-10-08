@@ -1,0 +1,56 @@
+{
+  "a2wName": "Heat pump",
+  "status": {
+    "operationMode": 1,
+    "specialStatus": 1,
+    "deiceStatus": 0,
+    "outdoorNow": 21,
+    "pumpDuty": 1,
+    "direction": 1,
+    "waterPressure": 1.6,
+    "tankStatus": {
+      "heatMax": 65,
+      "heatMin": 40,
+      "heatSet": 50,
+      "operationStatus": 1,
+      "temperatureNow": 48
+    },
+    "zoneStatus": [
+      {
+        "zoneId": 1,
+        "operationStatus": 1,
+        "temperatureNow": 28,
+        "heatSet": 26,
+        "heatMin": 20,
+        "heatMax": 30,
+        "coolSet": 14,
+        "coolMin": 10,
+        "coolMax": 20,
+        "comfortHeat": 2,
+        "comfortCool": -2,
+        "ecoHeat": -2,
+        "ecoCool": 2
+      },
+      {
+        "zoneId": 2,
+        "operationStatus": 0,
+        "temperatureNow": 25,
+        "heatSet": 22,
+        "heatMin": 15,
+        "heatMax": 25,
+        "comfortHeat": 2,
+        "comfortCool": -2,
+        "ecoHeat": -2,
+        "ecoCool": 2
+      }
+    ],
+    "faultStatus": [
+      {"errorMessage": "Water pressure low", "errorCode": "H62"}
+    ],
+    "quietMode": 1,
+    "forceDHW": 1,
+    "forceHeater": 0,
+    "holidayTimer": 0,
+    "powerful": 1
+  }
+}

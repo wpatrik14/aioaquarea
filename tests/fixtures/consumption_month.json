@@ -1,0 +1,6 @@
+{
+  "historyDataList": [
+    {"dataTime": "20250513", "heatConsumption": 4.522, "heatCost": 11.19756, "outdoorTemp": 9.90625, "tankConsumption": 1.521, "tankCost": 2.00772},
+    {"dataTime": "20250514", "heatConsumption": 3.0, "coolConsumption": 0.5, "heatCost": 7.0, "coolCost": 1.0, "outdoorTemp": 12.0, "tankConsumption": 1.0, "tankCost": 1.5}
+  ]
+}
