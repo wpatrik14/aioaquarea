@@ -33,6 +33,7 @@ from .errors import (
     DataNotAvailableError,
     RequestFailedError,
 )
+from .mfa_guardian import MfaChallenge, MfaStep
 from .statistics import Consumption, ConsumptionType, DateType
 
 __all__: Tuple[str, ...] = (
@@ -64,4 +65,6 @@ __all__: Tuple[str, ...] = (
     "PowerfulTime",
     "AquareaEnvironment",
     "SpecialStatus",
+    "MfaChallenge",
+    "MfaStep",
 )

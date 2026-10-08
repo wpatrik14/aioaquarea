@@ -204,7 +204,7 @@ def test_complete_mfa_guardian_unsupported():
     with pytest.raises(AuthenticationError) as exc:
         asyncio.run(auth.complete_mfa("123456"))
     assert exc.value.error_code == AuthenticationErrorCodes.MFA_REQUIRED
-    assert "guardian widget" in exc.value.error_message
+    assert "guardian config without request token" in exc.value.error_message
 
 
 def test_complete_mfa_without_pending_login():
