@@ -1,15 +1,29 @@
-> **This is the maintained fork of aioaquarea, published on PyPI as `aioaquarea-ng`.**
-> Install it with `pip install aioaquarea-ng`. The import name is unchanged: `import aioaquarea`.
->
-> The original library was written by Carlos J. Aliaga ([cjaliaga/aioaquarea](https://github.com/cjaliaga/aioaquarea)).
-> The upstream repository is no longer maintained, and Panasonic has started enforcing multi-factor
-> authentication (MFA) on logins, which breaks the upstream release
-> (see [cjaliaga/aioaquarea#92](https://github.com/cjaliaga/aioaquarea/issues/92)). This fork continues the work.
+# aioaquarea-ng
 
-Aioaquarea
-===================
+[![PyPI](https://img.shields.io/pypi/v/aioaquarea-ng)](https://pypi.org/project/aioaquarea-ng/)
 
-Asynchronous library to control Panasonic Aquarea devices
+Asynchronous Python library for Panasonic Aquarea heat pumps, through the Panasonic Aquarea Smart Cloud API. It powers the [home-assistant-aquarea](https://github.com/wpatrik14/home-assistant-aquarea) integration.
+
+This is the maintained fork of [cjaliaga/aioaquarea](https://github.com/cjaliaga/aioaquarea), originally written by Carlos J. Aliaga. Upstream has had no merges or releases since May 2026, and Panasonic has started enforcing multi-factor authentication on logins ([cjaliaga/aioaquarea#92](https://github.com/cjaliaga/aioaquarea/issues/92)), so development continues here. The package name changed; the import name did not.
+
+## Installation
+
+```bash
+pip install aioaquarea-ng
+```
+
+```python
+import aioaquarea  # same import name as the original package
+```
+
+Don't install it next to the original `aioaquarea` package: both provide the `aioaquarea` module.
+
+## Status
+
+- **Multi-factor authentication:** accounts that get Panasonic's MFA challenge fail with `AuthenticationError` code `MFA_REQUIRED` instead of a confusing token error. Completing the challenge is in progress ([#7](https://github.com/wpatrik14/aioaquarea/pull/7)).
+- **Water pressure:** `Device.water_pressure` (bar), when the unit reports it.
+
+Bug reports and pull requests are welcome in this repository.
 
 ## Requirements
 
@@ -20,7 +34,7 @@ This library requires:
 - aiohttp
 
 ## Usage
-The library supports the production environment of the Panasonic Aquarea Smart Cloud API and also the Demo environment. One of the main usages of this library is to integrate the Panasonic Aquarea Smart Cloud API with Home Assistant via [home-assistant-aquarea](https://github.com/cjaliaga/home-assistant-aquarea)
+The library supports the production environment of the Panasonic Aquarea Smart Cloud API and also the Demo environment. One of the main usages of this library is to integrate the Panasonic Aquarea Smart Cloud API with Home Assistant via [home-assistant-aquarea](https://github.com/wpatrik14/home-assistant-aquarea)
 
 Here is a simple example of how to use the library via getting a device object to interact with it:
 
@@ -71,4 +85,7 @@ async def main():
 
 ## Acknowledgements
 
-Big thanks to [ronhks](https://github.com/ronhks) for his awesome work on the [Panasonic Aquaera Smart Cloud integration with MQTT](https://github.com/ronhks/panasonic-aquarea-smart-cloud-mqtt).
+The original library is by [Carlos J. Aliaga](https://github.com/cjaliaga) ([cjaliaga/aioaquarea](https://github.com/cjaliaga/aioaquarea)), MIT licensed.
+
+
+Big thanks to [ronhks](https://github.com/ronhks) for his awesome work on the [Panasonic Aquarea Smart Cloud integration with MQTT](https://github.com/ronhks/panasonic-aquarea-smart-cloud-mqtt).
