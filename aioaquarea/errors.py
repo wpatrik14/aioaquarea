@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-try:
-    from enum import StrEnum
-except ImportError:
-    from strenum import StrEnum
+from enum import StrEnum
 
 
 class ClientError(Exception):
