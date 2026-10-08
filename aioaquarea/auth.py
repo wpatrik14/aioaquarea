@@ -98,10 +98,11 @@ class PanasonicRequestHeader:
                 "Access token is missing from settings.",
             )
 
-        now = dt.datetime.now()  # Use dt for datetime
+        # NOTE: this is the *local* time, but _get_api_key() interprets it as
+        # UTC. TODO: verify against upstream pcomfortcloud before changing.
+        now = dt.datetime.now()
         timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
         api_key = PanasonicRequestHeader._get_api_key(timestamp, settings.access_token)
-        _LOGGER.debug(f"Request Timestamp: {timestamp} key: {api_key}")
         headers = {
             "accept": "application/json; charset=utf-8",
             "content-type": "application/json",
@@ -147,6 +148,7 @@ class PanasonicRequestHeader:
             date = dt.datetime.strptime(
                 timestamp, "%Y-%m-%d %H:%M:%S"
             )  # Use dt for datetime
+            # Local time formatted by the caller, treated as UTC here (see above).
             timestamp_ms = str(
                 int(date.replace(tzinfo=dt.timezone.utc).timestamp() * 1000)
             )  # Use dt for datetime
@@ -166,7 +168,7 @@ class PanasonicRequestHeader:
 
             result = hash_str[:9] + "cfc" + hash_str[9:]
             return result
-        except Exception as ex:
+        except Exception:
             _LOGGER.error("Failed to generate API key")
 
 
@@ -186,14 +188,32 @@ def get_querystring_parameter_from_header_entry_url(
     return params.get(querystring_parameter, [None])[0]
 
 
+class RefreshTokenRejected(AuthenticationError):
+    """The refresh token was rejected (4xx); a full login is needed."""
+
+
+def _safe_path(location: str) -> str:
+    """Return only the path of a URL, never its query string."""
+    return urllib.parse.urlparse(location).path
+
+
 async def check_response(
     response: aiohttp.ClientResponse, step_name: str, expected_status: int
 ):
+    """Raise if the response status is not the expected one.
+
+    Only the step name, status and content type are logged: bodies can contain
+    credentials, tokens or session data.
+    """
     if response.status != expected_status:
-        response_text = await response.text()
         _LOGGER.error(
-            f"Error in {step_name}: Expected status {expected_status}, got {response.status}. Response: {response_text}"
+            "Error in %s: expected status %s, got %s (content-type: %s)",
+            step_name,
+            expected_status,
+            response.status,
+            response.headers.get("Content-Type", "unknown"),
         )
+        response.release()
         raise AuthenticationError(
             AuthenticationErrorCodes.API_ERROR,
             f"Error in {step_name}: Unexpected status code {response.status}",
@@ -208,7 +228,7 @@ def raise_missing_code(location: str):
     with a 400, and retrying repeats a password login that Panasonic reports to
     the user by email each time.
     """
-    path = urllib.parse.urlparse(location).path
+    path = _safe_path(location)
     if path.lstrip("/").startswith("mf"):
         raise AuthenticationError(
             AuthenticationErrorCodes.MFA_REQUIRED,
@@ -222,9 +242,11 @@ def raise_missing_code(location: str):
 
 async def has_new_version_been_published(response: aiohttp.ClientResponse) -> bool:
     if response.status == 401:
-        response_json = await response.json()
-        if response_json["code"] == 4106:
-            return True
+        try:
+            response_json = await response.json()
+            return response_json["code"] == 4106
+        except (aiohttp.ContentTypeError, ValueError, KeyError, TypeError):
+            return False
     return False
 
 
@@ -275,6 +297,16 @@ class Authenticator:
         await self._retrieve_client_acc()
 
     async def refresh_token(self):
+        """Get a new access token using the stored refresh token.
+
+        Raises RefreshTokenRejected on a 4xx answer (the caller should fall back
+        to a full login) and AuthenticationError(API_ERROR) otherwise.
+        """
+        refresh_token = self._settings.refresh_token
+        if not refresh_token:
+            raise RefreshTokenRejected(
+                AuthenticationErrorCodes.TOKEN_EXPIRED, "No refresh token available"
+            )
         self._logger.debug("Refreshing token")
         # do before, so that timestamp is older rather than newer
         now = dt.datetime.now()
@@ -290,22 +322,28 @@ class Authenticator:
                 "scope": self._settings.scope,
                 "client_id": APP_CLIENT_ID,
                 "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
             },
             allow_redirects=False,
         )
+        if 400 <= response.status < 500:
+            _LOGGER.debug("refresh_token rejected with status %s", response.status)
+            response.release()
+            raise RefreshTokenRejected(
+                AuthenticationErrorCodes.TOKEN_EXPIRED,
+                f"Refresh token rejected (status {response.status})",
+            )
         await check_response(response, "refresh_token", 200)
         token_response = json.loads(await response.text())
         self._set_token(token_response, unix_time_token_received)
+        await self._retrieve_client_acc()
 
     async def _authorize(self, challenge) -> aiohttp.ClientResponse:
         # --------------------------------------------------------------------
         # AUTHORIZE
         # --------------------------------------------------------------------
         state = generate_random_string(20)
-        self._logger.debug(
-            "Requesting authorization, %s",
-            json.dumps({"challenge": challenge, "state": state}),
-        )
+        self._logger.debug("Requesting authorization")
 
         response = await self._sess.get(
             f"{BASE_PATH_AUTH}/authorize",
@@ -339,8 +377,7 @@ class Authenticator:
         )
         location = authorization_response.headers["Location"]
         self._logger.debug(
-            "Following authorization redirect, %s",
-            json.dumps({"url": f"{BASE_PATH_AUTH}/{location}", "state": state}),
+            "Following authorization redirect to %s", _safe_path(location)
         )
         response = await self._sess.get(
             f"{BASE_PATH_AUTH}/{location}", allow_redirects=False
@@ -353,10 +390,7 @@ class Authenticator:
         # -------------------------------------------------------------------
         # LOGIN
         # -------------------------------------------------------------------
-        self._logger.debug(
-            "Authenticating with username and password, %s",
-            json.dumps({"csrf": csrf_cookie, "state": state}),
-        )
+        self._logger.debug("Authenticating with username and password")
         response = await self._sess.post(
             f"{BASE_PATH_AUTH}/usernamepassword/login",
             headers={
@@ -380,6 +414,16 @@ class Authenticator:
             },
             allow_redirects=False,
         )
+        if response.status in (400, 401, 403):
+            # Auth0 answers a rejected username/password (and blocked users)
+            # with 401 {"code": "invalid_user_password"} (ASSUMED: 400/403 for
+            # other rejections). The body is deliberately not logged.
+            self._logger.error("Login rejected by Panasonic (status %s)", response.status)
+            response.release()
+            raise AuthenticationError(
+                AuthenticationErrorCodes.INVALID_USERNAME_OR_PASSWORD,
+                f"Username or password rejected (status {response.status})",
+            )
         await check_response(response, "login", 200)
 
         # -------------------------------------------------------------------
@@ -388,16 +432,14 @@ class Authenticator:
 
         # get wa, wresult, wctx from body
         response_text = await response.text()
-        self._logger.debug(
-            "Authentication response, %s", json.dumps({"html": response_text})
-        )
+        self._logger.debug("Received login response (%d bytes)", len(response_text))
         soup = BeautifulSoup(response_text, "html.parser")
         input_lines = soup.find_all("input", {"type": "hidden"})
         parameters = dict()
         for input_line in input_lines:
             parameters[input_line.get("name")] = input_line.get("value")
 
-        self._logger.debug("Callback with parameters, %s", json.dumps(parameters))
+        self._logger.debug("Posting login callback (%d fields)", len(parameters))
         response = await self._sess.post(
             url=f"{BASE_PATH_AUTH}/login/callback",
             data=parameters,
@@ -414,20 +456,14 @@ class Authenticator:
         # ------------------------------------------------------------------
 
         location = response.headers["Location"]
-        self._logger.debug(
-            "Callback response, %s",
-            json.dumps({"redirect": location, "html": await response.text()}),
-        )
+        self._logger.debug("Callback redirect to %s", _safe_path(location))
 
         response = await self._sess.get(
             f"{BASE_PATH_AUTH}/{location}", allow_redirects=False
         )
         await check_response(response, "login_redirect", 302)
         location = response.headers["Location"]
-        self._logger.debug(
-            "Callback redirect, %s",
-            json.dumps({"redirect": location, "html": await response.text()}),
-        )
+        self._logger.debug("Login redirect to %s", _safe_path(location))
 
         code = get_querystring_parameter_from_header_entry_url(
             response, "Location", "code"
@@ -464,11 +500,13 @@ class Authenticator:
         self._set_token(token_response, unix_time_token_received)
 
     def _set_token(self, token_response, unix_time_token_received):
+        # A refresh response may omit the refresh token/scope (no rotation):
+        # keep the stored ones then.
         self._settings.set_token(
             token_response["access_token"],
-            token_response["refresh_token"],
+            token_response.get("refresh_token") or self._settings.refresh_token,
             unix_time_token_received + token_response["expires_in"],
-            token_response["scope"],
+            token_response.get("scope") or self._settings.scope,
         )
 
     async def _retrieve_client_acc(self):
