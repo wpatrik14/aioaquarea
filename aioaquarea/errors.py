@@ -63,6 +63,7 @@ class AuthenticationErrorCodes(StrEnum):
     INVALID_CREDENTIALS = "1000-1401"
     API_ERROR = "API_ERROR"
     TOKEN_EXPIRED = "TOKEN_EXPIRED"  # Added for token expiration
+    MFA_REQUIRED = "MFA_REQUIRED"
 
 
 class DataNotAvailableError(Exception):

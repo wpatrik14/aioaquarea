@@ -200,6 +200,26 @@ async def check_response(
         )
 
 
+def raise_missing_code(location: str):
+    """Raise when the login did not end with an authorization code.
+
+    Panasonic sends accounts with multi-factor authentication to an ``/mf``
+    challenge page instead. Requesting a token without a code would only fail
+    with a 400, and retrying repeats a password login that Panasonic reports to
+    the user by email each time.
+    """
+    path = urllib.parse.urlparse(location).path
+    if path.lstrip("/").startswith("mf"):
+        raise AuthenticationError(
+            AuthenticationErrorCodes.MFA_REQUIRED,
+            "The Panasonic ID requires multi-factor authentication, which is not supported yet",
+        )
+    raise AuthenticationError(
+        AuthenticationErrorCodes.API_ERROR,
+        f"Login did not return an authorization code (redirected to {path})",
+    )
+
+
 async def has_new_version_been_published(response: aiohttp.ClientResponse) -> bool:
     if response.status == 401:
         response_json = await response.json()
@@ -246,6 +266,8 @@ class Authenticator:
             code = get_querystring_parameter_from_header_entry_url(
                 authorization_response, "Location", "code"
             )
+            if code is None:
+                raise_missing_code(authorization_redirect)
         else:
             code = await self._login(authorization_response, username, password)
 
@@ -407,9 +429,12 @@ class Authenticator:
             json.dumps({"redirect": location, "html": await response.text()}),
         )
 
-        return get_querystring_parameter_from_header_entry_url(
+        code = get_querystring_parameter_from_header_entry_url(
             response, "Location", "code"
         )
+        if code is None:
+            raise_missing_code(location)
+        return code
 
     async def _request_new_token(self, code, code_verifier):
         self._logger.debug("Requesting a new token")
