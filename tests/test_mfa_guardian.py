@@ -15,6 +15,7 @@ from aioaquarea.errors import AuthenticationError, AuthenticationErrorCodes
 from aioaquarea.mfa_guardian import (
     GuardianConfig,
     GuardianFlow,
+    config_summary,
     host_allowed,
     jwt_expired,
     mask_destination,
@@ -455,3 +456,70 @@ def test_helpers():
     assert jwt_expired(make_jwt(-5)) is True
     assert jwt_expired(f"a.{b64({'sub': 1})}.c") is None
 
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://panasonic.guardian.eu.auth0.com/",
+        "https://panasonic.guardian.auth0.com/api/start-flow",
+        "https://authglb.digital.panasonic.com/appliance-mfa",
+        "https://x.panasonic.com",
+    ],
+)
+def test_service_host_allowed(url):
+    assert host_allowed(url, MF_URL)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://evil.com/",
+        "https://auth0.com.evil.com/",
+        "https://guardian.auth0.com.evil/",
+        "https://panasonic.guardian.eu.auth0.com.evil.com/",
+        "http://panasonic.guardian.eu.auth0.com/",
+        "https://evilpanasonic.com/",
+        "https://guardian.auth0.com/",
+    ],
+)
+def test_service_host_rejected(url):
+    assert not host_allowed(url, MF_URL)
+
+
+async def test_rejected_host_named_in_error(client, mocked):
+    page = guardian_page(
+        f'requestToken: "{REQUEST_TOKEN}", mfaServerUrl: "https://evil.example.com/mfa"'
+    )
+    await login_to_mfa(client, mocked, page, loader=None)
+    with pytest.raises(AuthenticationError, match=r"unexpected host \(evil.example.com\)"):
+        await client.start_mfa()
+
+
+def _summary(extra, mechanism):
+    config = GuardianConfig(page_url=MF_URL)
+    config.merge_text(
+        f'serviceUrl: "https://panasonic.guardian.eu.auth0.com/x/y?q=SECRET", '
+        f'postActionURL: "/mf?state=SECRET", stateCheckingMechanism: "{mechanism}"{extra}',
+        "inline",
+    )
+    return config_summary(config), config
+
+
+def test_summary_service_host_and_post_path():
+    text, _ = _summary("", "polling")
+    assert "service_host=https://panasonic.guardian.eu.auth0.com post_action_path=/mf" in text
+    assert "state_checking_mechanism=polling" in text
+    assert "SECRET" not in text
+    assert "websocket" not in text
+
+
+def test_summary_mechanism_other_and_websocket():
+    text, _ = _summary("", "manual")
+    assert "state_checking_mechanism=other" in text
+    assert "manual" not in text
+    text, config = _summary("", "websocket")
+    assert "state_checking_mechanism=websocket" in text
+    assert "uses polling transport" in text
+    flow = GuardianFlow(None, config, user_agent="ua")
+    assert any("websocket" in step.note for step in flow.steps)

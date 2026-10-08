@@ -257,6 +257,9 @@ def merge_loader(config: GuardianConfig, path: str, status: int, text: str) -> N
         config.scan_jwt(text, "loader")
 
 
+KNOWN_STATE_MECHANISMS = frozenset({"polling", "websocket"})
+
+
 def config_summary(config: GuardianConfig) -> str:
     """Sanitized multi-line summary of what was found (key names only)."""
     interesting = sorted(k for k in config.seen_keys if len(k) <= 40)[:60]
@@ -273,6 +276,25 @@ def config_summary(config: GuardianConfig) -> str:
             + " expired="
             + ("unknown" if expired is None else ("yes" if expired else "no"))
         )
+    service = config.get("service_url")
+    post_action = config.get("post_action")
+    if service or post_action:
+        parsed = urllib.parse.urlparse(service or "")
+        post_path = urllib.parse.urlparse(post_action or "").path
+        fields = []
+        if service:
+            fields.append(f"service_host={parsed.scheme}://{parsed.netloc}")
+        if post_action:
+            fields.append(f"post_action_path={post_path}")
+        lines.append("  " + " ".join(fields))
+    mechanism = config.get("state_checking_mechanism")
+    if mechanism:
+        known = mechanism.lower() in KNOWN_STATE_MECHANISMS
+        lines.append(f"  state_checking_mechanism={mechanism.lower() if known else 'other'}")
+        if mechanism.lower() == "websocket":
+            lines.append(
+                "  note: page prefers websocket (socket.io); this client uses polling transport"
+            )
     lines.extend(f"  loader {note}" for note in config.loader_notes)
     return "\n".join(lines)
 
@@ -401,6 +423,11 @@ class GuardianFlow:
             service = f"{page.scheme}://{page.netloc}/appliance-mfa"
             self.steps.append(MfaStep("config", note="service_url=fallback /appliance-mfa"))
         self.service_url = service.rstrip("/")
+        mechanism = config.get("state_checking_mechanism") or ""
+        if mechanism.lower() == "websocket":
+            self.steps.append(
+                MfaStep("config", note="page prefers websocket; using polling transport")
+            )
 
     def _step(self, name, status=None, keys=None, note="") -> None:
         step = MfaStep(name, status, keys or [], note)
@@ -439,7 +466,10 @@ class GuardianFlow:
     async def start(self) -> MfaChallenge:
         """``start-flow``, pick the factor and send the SMS if it is an SMS factor."""
         if not host_allowed(self.service_url, self.config.page_url):
-            raise _mfa_error("unsupported MFA page: Guardian service on an unexpected host")
+            host = urllib.parse.urlparse(self.service_url).hostname or "?"
+            raise _mfa_error(
+                f"unsupported MFA page: Guardian service on an unexpected host ({host})"
+            )
         request_token = self.config.get("request_token")
         if not request_token:
             if self.config.get("ticket"):
