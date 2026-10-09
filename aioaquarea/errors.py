@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from .mfa import MfaChallenge
+
 
 class ClientError(Exception):
     """Base exception for all client errors"""
@@ -41,6 +43,21 @@ class AuthenticationError(ApiError):
         return f"Authentication error: {self.error_code} - {self.error_message}"
 
 
+class MfaRequiredError(AuthenticationError):
+    """The login needs a multi-factor code: pass it to ``Client.complete_mfa``.
+
+    Subclass of ``AuthenticationError`` with ``error_code`` ``MFA_REQUIRED``, so
+    callers that only know the plain error keep working.
+    """
+
+    def __init__(self, challenge: MfaChallenge):
+        super().__init__(
+            AuthenticationErrorCodes.MFA_REQUIRED,
+            f"Multi-factor authentication required ({challenge.factor})",
+        )
+        self.challenge = challenge
+
+
 class InvalidData(ClientError):
     """Invalid data"""
 
@@ -61,6 +78,8 @@ class AuthenticationErrorCodes(StrEnum):
     API_ERROR = "API_ERROR"
     TOKEN_EXPIRED = "TOKEN_EXPIRED"  # Added for token expiration
     MFA_REQUIRED = "MFA_REQUIRED"
+    MFA_INVALID_CODE = "MFA_INVALID_CODE"  # wrong code: may be retried
+    MFA_EXPIRED = "MFA_EXPIRED"  # MFA transaction expired: log in again
 
 
 class DataNotAvailableError(Exception):
