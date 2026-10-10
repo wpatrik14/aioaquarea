@@ -200,10 +200,20 @@ class DeviceManager:
         try:
             device = json_response.get("status")
             operation_mode_value = device.get("operationMode")
+            zone_statuses = [z for z in device.get("zoneStatus", []) if isinstance(z, dict)]
+            tank_json = device.get("tankStatus") or {}
+            # The status payload has no device-level operationStatus. The device
+            # is on while any zone or the tank is on. (specialStatus, which was
+            # read here before, is the eco/comfort preset: 0 = none, so a device
+            # without a preset was always reported as off and current_action
+            # was always OFF.)
+            device_on = any(
+                z.get("operationStatus") == OperationStatus.ON for z in zone_statuses
+            ) or tank_json.get("operationStatus") == OperationStatus.ON
 
             device_status = DeviceStatus(
                 long_id=device_info.device_id,  # Use device_info.long_id here
-                operation_status=OperationStatus(device.get("specialStatus")),
+                operation_status=OperationStatus.ON if device_on else OperationStatus.OFF,
                 device_status=DeviceModeStatus(device.get("deiceStatus")),
                 temperature_outdoor=device.get("outdoorNow"),
                 operation_mode=(
