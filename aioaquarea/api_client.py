@@ -7,7 +7,12 @@ import aiohttp
 
 from .auth import CCAppVersion, PanasonicRequestHeader, PanasonicSettings
 from .const import AQUAREA_SERVICE_BASE, AQUAREA_SERVICE_DEMO_BASE, AquareaEnvironment
-from .errors import ApiError, AuthenticationError, AuthenticationErrorCodes
+from .errors import (
+    AgreementNotAcceptedError,
+    ApiError,
+    AuthenticationError,
+    AuthenticationErrorCodes,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -108,7 +113,7 @@ class AquareaAPIClient:
             errors = await self.look_for_errors(data)
             # If we have errors, let's look for authentication errors
             for error in errors:
-                if isinstance(error, AuthenticationError):
+                if isinstance(error, (AuthenticationError, AgreementNotAcceptedError)):
                     raise error
                 if error.error_code in list(AuthenticationErrorCodes):
                     raise AuthenticationError(error.error_code, error.error_message)
@@ -144,10 +149,17 @@ class AquareaAPIClient:
             return []
 
         messages = data.get("message", [])
+        code = data.get("code")
+        if code is not None and isinstance(messages, str):
+            # Comfort Cloud / API Gateway shape: {"code": 4000, "message": "..."}
+            if str(code) == AgreementNotAcceptedError.AGREEMENT_ERROR_CODE:
+                return [AgreementNotAcceptedError()]
+            if "Token expires" not in messages:
+                return [ApiError(str(code), messages)]
         if not isinstance(messages, list):
             messages = [messages]  # Wrap single string message in a list
 
-        api_errors = []
+        api_errors: list[ApiError] = []
         for error_item in messages:
             if (
                 isinstance(error_item, dict)

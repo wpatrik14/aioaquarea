@@ -4,8 +4,8 @@ import datetime as dt
 import logging
 from typing import TYPE_CHECKING
 
-from .errors import ApiError, AuthenticationError
-from .statistics import Consumption, DateType
+from .errors import AgreementNotAcceptedError, ApiError, AuthenticationError
+from .statistics import Consumption, ConsumptionReport, DateType
 
 if TYPE_CHECKING:
     from .api_client import AquareaAPIClient
@@ -26,7 +26,21 @@ class AquareaConsumptionManager:
     async def get_device_consumption(
         self, long_id: str, aggregation: DateType, date_input: str
     ) -> list[Consumption] | None:
-        """Get device consumption."""
+        """Get the consumption buckets of a period (None on errors or no data)."""
+        report = await self.get_device_consumption_report(
+            long_id, aggregation, date_input
+        )
+        return report.history if report and report.history else None
+
+    async def get_device_consumption_report(
+        self, long_id: str, aggregation: DateType, date_input: str
+    ) -> ConsumptionReport | None:
+        """Get the full consumption response (buckets, last year, tariff).
+
+        Returns None when the request fails (other than authentication) or the
+        response has no ``historyDataList``. See ``ConsumptionReport`` for the
+        date format and the window of each aggregation.
+        """
         try:
             # Format timezone offset
             offset_seconds = self._timezone.utcoffset(dt.datetime.now()).total_seconds()
@@ -38,7 +52,7 @@ class AquareaConsumptionManager:
                 DateType.DAY: 0,
                 DateType.MONTH: 1,
                 DateType.YEAR: 2,
-                # Add other mappings if WEEK is ever used for consumption API
+                # There is no week granularity; WEEK falls back to DAY.
             }
             payload = {
                 "apiName": "/remote/v1/api/consumption",
@@ -61,18 +75,15 @@ class AquareaConsumptionManager:
 
             consumption_data = await response.json()
             if consumption_data and consumption_data.get("historyDataList"):
-                return [
-                    Consumption(item) for item in consumption_data["historyDataList"]
-                ]
-            else:
-                _LOGGER.warning(
-                    "No consumption data found for device %s, date %s, aggregation %s",
-                    long_id,
-                    date_input,
-                    aggregation,
-                )
-                return None
-        except AuthenticationError:
+                return ConsumptionReport.from_dict(consumption_data)
+            _LOGGER.warning(
+                "No consumption data found for device %s, date %s, aggregation %s",
+                long_id,
+                date_input,
+                aggregation,
+            )
+            return None
+        except (AuthenticationError, AgreementNotAcceptedError):
             # Let the caller (auth_required) re-login or surface the problem
             raise
         except ApiError as ex:

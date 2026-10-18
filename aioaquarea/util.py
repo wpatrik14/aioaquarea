@@ -2,12 +2,12 @@ from collections import OrderedDict
 
 
 def limit_range(value, min_value, max_value):
-    if value < min_value:
+    """Clamp ``value`` to [min_value, max_value]; a ``None`` bound is not applied."""
+    if min_value is not None and value < min_value:
         return min_value
-    elif value > max_value:
+    if max_value is not None and value > max_value:
         return max_value
-    else:
-        return value
+    return value
 
 
 class LimitedSizeDict(OrderedDict):

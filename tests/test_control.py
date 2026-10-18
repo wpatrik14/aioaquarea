@@ -31,9 +31,15 @@ def sent(mocked):
 
 
 async def test_operation_status(logged_client, mocked):
-    mocked.post(DEVICE_URL, payload={})
+    mocked.post(TRANSFER, payload={})
     await logged_client.post_device_operation_status(LONG_ID, OperationStatus.ON)
-    assert sent(mocked) == [{"status": [{"deviceGuid": LONG_ID, "operationStatus": 1}]}]
+    assert sent(mocked) == [
+        {
+            "apiName": "/remote/v1/api/devices",
+            "requestMethod": "POST",
+            "bodyParam": {"gwid": LONG_ID, "operationStatus": 1},
+        }
+    ]
 
 
 async def test_tank_temperature(logged_client, mocked):
@@ -87,21 +93,30 @@ async def test_operation_update_with_temperatures(logged_client, mocked):
 
 
 async def test_special_status(logged_client, mocked):
-    mocked.post(DEVICE_URL, payload={})
+    """Eco/comfort goes through the transfer proxy like every other control."""
+    mocked.post(TRANSFER, payload={})
     await logged_client.post_device_set_special_status(
         LONG_ID,
         SpecialStatus.ECO,
         [ZoneTemperatureSetUpdate(1, cool_set=None, heat_set=24), ZoneTemperatureSetUpdate(2, 12, 23)],
     )
-    mocked.post(DEVICE_URL, payload={})
+    mocked.post(TRANSFER, payload={})
     await logged_client.post_device_set_special_status(LONG_ID, None, [])
     first, second = sent(mocked)
-    assert first["status"][0]["specialStatus"] == 1
-    assert first["status"][0]["zoneStatus"] == [
-        {"zoneId": 1, "heatSet": 24},
-        {"zoneId": 2, "heatSet": 23, "coolSet": 12},
-    ]
-    assert second["status"][0]["specialStatus"] == 0
+    assert first == {
+        "apiName": "/remote/v1/api/devices",
+        "requestMethod": "POST",
+        "bodyParam": {
+            "gwid": LONG_ID,
+            "specialStatus": 1,
+            "zoneStatus": [
+                {"zoneId": 1, "heatSet": 24},
+                {"zoneId": 2, "heatSet": 23, "coolSet": 12},
+            ],
+        },
+    }
+    assert second["bodyParam"] == {"gwid": LONG_ID, "specialStatus": 0}
+    assert not any(DEVICE_URL in str(url) for (_, url) in mocked.requests)
 
 
 @pytest.mark.parametrize(
@@ -261,7 +276,7 @@ async def test_device_properties(logged_client, mocked):
     assert dev.force_heater == ForceHeater.OFF and dev.holiday_timer == HolidayTimer.OFF
     assert dev.powerful_time == PowerfulTime.ON_30MIN
     assert dev.device_mode_status == DeviceModeStatus.NORMAL
-    assert dev.special_status is None
+    assert dev.special_status == SpecialStatus.ECO  # fixture specialStatus 1
     assert dev.support_cooling(1) and not dev.support_cooling(2) and not dev.support_cooling(9)
     assert dev.support_special_status in (True, False)
     assert dev.heat_max == 30 and dev.cool_max == 20
@@ -303,7 +318,7 @@ async def test_device_actions(logged_client, mocked):
     await dev.tank.turn_off()
     await dev.tank.turn_on()
     bodies = sent(mocked)
-    assert {"status": [{"deviceGuid": LONG_ID, "operationStatus": 0}]} in bodies
+    assert {"gwid": LONG_ID, "operationStatus": 0} in [b.get("bodyParam") for b in bodies]
     assert any(b.get("bodyParam", {}).get("operationMode") == 3 for b in bodies)
     assert any(b.get("bodyParam", {}).get("zoneStatus") == [{"zoneId": 1, "heatSet": 23}] for b in bodies)
     assert any(b.get("bodyParam", {}).get("forcedefrost") == 1 for b in bodies)
@@ -319,17 +334,18 @@ async def test_set_temperature_in_cool_mode(logged_client, mocked):
 
 
 async def test_device_special_status(logged_client, mocked):
-    dev = await make_device(logged_client, mocked)
-    mocked.post(DEVICE_URL, payload={}, repeat=True)
-    if dev.support_special_status:
-        await dev.set_special_status(SpecialStatus.ECO)
-        assert sent(mocked)[-1]["status"][0]["specialStatus"] == 1
-        dev._status.special_status = SpecialStatus.ECO
-        await dev.set_special_status(SpecialStatus.COMFORT)
-        await dev.set_special_status(None)
-    else:
-        with pytest.raises(Exception, match="special status"):
-            await dev.set_special_status(SpecialStatus.ECO)
+    dev = await make_device(logged_client, mocked)  # fixture: eco active
+    assert dev.support_special_status
+    mocked.post(TRANSFER, payload={}, repeat=True)
+    await dev.set_special_status(SpecialStatus.ECO)  # already eco: nothing sent
+    assert sent(mocked)[-1].get("bodyParam", {}).get("specialStatus") is None
+    await dev.set_special_status(SpecialStatus.COMFORT)
+    body = sent(mocked)[-1]["bodyParam"]
+    assert body["specialStatus"] == 2
+    # zone 1: heat 26 - eco(-2) + comfort(2) = 30 (max 30); cool 14 - eco(2) + comfort(-2) = 10
+    assert body["zoneStatus"][0] == {"zoneId": 1, "heatSet": 30, "coolSet": 10}
+    await dev.set_special_status(None)
+    assert sent(mocked)[-1]["bodyParam"]["specialStatus"] == 0
 
 
 async def test_refresh_data_and_consumption(logged_client, mocked):

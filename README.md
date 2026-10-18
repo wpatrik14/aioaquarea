@@ -21,7 +21,16 @@ Don't install it next to the original `aioaquarea` package: both provide the `ai
 ## Status
 
 - **Multi-factor authentication:** accounts with Panasonic's MFA (SMS or authenticator app code) are supported. `Client.login()` raises `MfaRequiredError` (an `AuthenticationError` with code `MFA_REQUIRED`) carrying an `MfaChallenge`; pass the code to `Client.complete_mfa()`. See [Multi-factor authentication](#multi-factor-authentication).
-- **Water pressure:** `Device.water_pressure` (bar), when the unit reports it.
+- **Water pressure:** `Device.water_pressure` (bar), when the unit reports it (live reads only; `Device.status_data_mode` is `CACHED` when the library had to fall back to the cloud's cached status, which has no water pressure).
+- **Eco / comfort presets:** `Device.special_status` reads the preset (`SpecialStatus.ECO`, `SpecialStatus.COMFORT`, or `None`); `Device.set_special_status()` switches it, moving the zone setpoints by the preset offsets like the app does.
+- **On/off state:** `Device.operation_status` is ON while any zone or the tank is on.
+- **Zones:** built from the device status, with the names set in the app (`DeviceZone.name`), the raw zone type/sensor values and cooling support from `coolMode`. Unconfigured placeholder zones are no longer reported.
+- **More device fields (read only):** `bivalent`, `bivalent_actual`, `external_heater`, `electric_anode`, `control_box`, `uncontrollable`, `service_type`, `multi_od_connection`, `model_series_selection`, `stand_alone`, `connection_status`, `dhw_flag` (raw values; `None` when the unit does not report them).
+- **Consumption:** `Client.get_device_consumption()` (day / month / year buckets) and `Client.get_device_consumption_report()` with the tariff and currency, last year's months (year view) and `Consumption.is_future` for buckets that are still in the future.
+- **Weekly timer (read only):** `Client.get_weekly_timer()` / `Device.get_weekly_timer()` return the schedule (7 days x 6 slots) and the setpoint limits.
+- **Agreements:** when Panasonic publishes new terms (error 4103) requests raise `AgreementNotAcceptedError`; accept them in the Panasonic Comfort Cloud app. `Client.get_agreement_status()` lists the accepted versions.
+
+What the cloud API offers, and what has been verified, is described in [docs/api-map.md](docs/api-map.md).
 
 Bug reports and pull requests are welcome in this repository.
 
@@ -29,7 +38,7 @@ Bug reports and pull requests are welcome in this repository.
 
 This library requires:
 
-- Python >= 3.9
+- Python >= 3.11
 - asyncio
 - aiohttp
 

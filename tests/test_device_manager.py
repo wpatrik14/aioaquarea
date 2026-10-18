@@ -37,9 +37,9 @@ async def test_get_devices_parses_groups(logged_client, mocked):
     first, second = devices
     assert first.name == "Aquarea"
     assert first.has_tank is True
-    assert [z.zone_id for z in first.zones] == [1, 2]
+    # zone 2 is a bare {"zoneId": 2} placeholder of an unconfigured zone
+    assert [z.zone_id for z in first.zones] == [1]
     assert first.zones[0].cool_mode is True  # coolMin/coolMax present
-    assert first.zones[1].cool_mode is False
     assert second.has_tank is False  # empty tankStatus
     assert second.name == "Unknown Device"
     assert second.zones[0].cool_mode is True  # device operationMode 2 = cool

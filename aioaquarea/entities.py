@@ -26,6 +26,7 @@ from .data import (
 )
 from .errors import DataNotAvailableError
 from .statistics import Consumption, ConsumptionType, DateType
+from .weekly_timer import WeeklyTimer
 
 if TYPE_CHECKING:
     from .core import AquareaClient
@@ -78,19 +79,23 @@ class DeviceImpl(Device):
         client: "AquareaClient",
         consumption_refresh_interval: Optional[dt.timedelta] = None,
         timezone: dt.timezone = dt.timezone.utc,
+        device_info: DeviceInfo | None = None,
     ) -> None:
-        # Create a DeviceInfo object from the individual arguments
-        device_info = DeviceInfo(
-            device_id=device_id,
-            name=name,
-            long_id=long_id,
-            mode=OperationMode.Heat,
-            has_tank=has_tank,
-            firmware_version=firmware_version,
-            model=model,
-            zones=zones_info,
-            status_data_mode=StatusDataMode.LIVE,
-        )
+        # Create a DeviceInfo object from the individual arguments, unless the
+        # caller passed the one from the device list (it carries
+        # connection_status and dhw_flag too).
+        if device_info is None:
+            device_info = DeviceInfo(
+                device_id=device_id,
+                name=name,
+                long_id=long_id,
+                mode=OperationMode.Heat,
+                has_tank=has_tank,
+                firmware_version=firmware_version,
+                model=model,
+                zones=zones_info,
+                status_data_mode=StatusDataMode.LIVE,
+            )
         super().__init__(device_info, status)
         self._client = client
         self._timezone = timezone
@@ -123,6 +128,8 @@ class DeviceImpl(Device):
 
     async def refresh_data(self) -> None:
         self._status = await self._client.get_device_status(self._info)
+        # Zones hold their own status: rebuild them from the new one.
+        self.__build_zones__(self._info.zones)
 
         if self.has_tank and self._status.tank_status:
             self._tank = TankImpl(self._status.tank_status[0], self, self._client)
@@ -170,6 +177,9 @@ class DeviceImpl(Device):
                     # Clear previous month's data if any
                     self._consumption.clear()
                     for item in consumption_list:
+                        if item.is_future:
+                            # Days after today (no outdoorTemp): not data yet
+                            continue
                         try:
                             # Parse dataTime to get the date for the key
                             item_date_str = item.data_time
@@ -392,6 +402,10 @@ class DeviceImpl(Device):
             await self._client.post_device_set_powerful_time(
                 self.long_id, powerful_time
             )
+
+    async def get_weekly_timer(self) -> WeeklyTimer:
+        """Read the device's weekly schedule (read only)."""
+        return await self._client.get_weekly_timer(self.long_id)
 
     async def __set_special_status__(
         self,

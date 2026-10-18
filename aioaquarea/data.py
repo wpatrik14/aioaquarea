@@ -19,6 +19,16 @@ class ZoneSensor(StrEnum):
     INTERNAL = "Internal"
     WATER_TEMPERATURE = "Water temperature"
     THERMISTOR = "Thermistor"
+    UNKNOWN = "Unknown"
+
+
+# Numeric ``zoneSensor`` values of the device status. Only 0 has been seen, on a
+# water temperature (buffer tank) zone with a 20-55 C setpoint range; the other
+# values are not mapped until they are confirmed, and are reported as UNKNOWN
+# (which keeps setting the temperature and eco/comfort enabled, as before).
+ZONE_SENSOR_IDS: dict[int, ZoneSensor] = {
+    0: ZoneSensor.WATER_TEMPERATURE,
+}
 
 
 class SensorMode(StrEnum):
@@ -136,6 +146,7 @@ class OperationStatus(IntEnum):
 
 class ZoneType(StrEnum):
     ROOM = "Room"
+    UNKNOWN = "Unknown"
 
 
 class ExtendedOperationMode(IntEnum):
@@ -227,10 +238,22 @@ class PowerfulTime(IntEnum):
 
 
 class SpecialStatus(IntEnum):
-    """Special status"""
+    """Special status (eco/comfort preset) of the device.
+
+    The status reports ``specialStatus`` 0 for "no preset", which the library
+    exposes as ``None``.
+    """
 
     ECO = 1
     COMFORT = 2
+
+
+def parse_special_status(value: object) -> SpecialStatus | None:
+    """Map a raw ``specialStatus`` value to ``SpecialStatus`` (0/unknown -> None)."""
+    try:
+        return SpecialStatus(value) if value else None
+    except (ValueError, TypeError):
+        return None
 
 
 @dataclass
@@ -267,6 +290,10 @@ class DeviceZoneInfo:
     zone_sensor: ZoneSensor
     heat_sensor: SensorMode
     cool_sensor: SensorMode | None
+    zone_type_id: int | None = None
+    """Raw ``zoneType`` value of the device status (meaning unverified)."""
+    zone_sensor_id: int | None = None
+    """Raw ``zoneSensor`` value of the device status (see ``ZONE_SENSOR_IDS``)."""
 
 
 @dataclass
@@ -286,6 +313,12 @@ class DeviceZoneStatus:
     comfort_cool: int | None
     eco_heat: int | None
     eco_cool: int | None
+    name: str | None = None
+    """User-given zone name (``zoneName``), if the status reports one."""
+    zone_type_id: int | None = None
+    """Raw ``zoneType`` value (meaning unverified)."""
+    zone_sensor_id: int | None = None
+    """Raw ``zoneSensor`` value (see ``ZONE_SENSOR_IDS``)."""
 
 
 @dataclass
@@ -301,6 +334,10 @@ class DeviceInfo:
     model: str  # Added model attribute
     zones: list[DeviceZoneInfo]
     status_data_mode: StatusDataMode  # New field
+    connection_status: int | None = None
+    """``connectionStatus`` from the device list (0 seen while reachable; other values unverified)."""
+    dhw_flag: bool | None = None
+    """``dhwFlg`` from the device list (false on a unit with a tank; semantics unverified)."""
 
 
 @dataclass()
@@ -330,6 +367,23 @@ class DeviceStatus:
     powerful_time: PowerfulTime
     special_status: SpecialStatus | None
     water_pressure: float | None = None
+    data_mode: StatusDataMode = StatusDataMode.LIVE
+    """LIVE (``deviceDirect=1``) or CACHED (``deviceDirect=0`` fallback, which has
+    no ``waterPressure`` and can report a different ``direction``)."""
+    cool_mode: int | None = None
+    """Raw ``coolMode`` (non-zero seen on a cooling capable unit; values unverified)."""
+    tank_flag: int | None = None
+    """Raw ``tank`` flag (1 = the unit has a DHW tank)."""
+    bivalent: int | None = None
+    bivalent_actual: int | None = None
+    external_heater: int | None = None
+    electric_anode: int | None = None
+    control_box: int | None = None
+    uncontrollable: bool | None = None
+    service_type: str | None = None
+    multi_od_connection: int | None = None
+    model_series_selection: int | None = None
+    stand_alone: int | None = None
 
 
 @dataclass
@@ -365,16 +419,15 @@ class DeviceZone:
         self._info = info
         self._status = status
 
-        if self.supports_special_status:
-            eco_heat = self._status.eco_heat if self._status else None
-            eco_cool = self._status.eco_cool if self._status else None
-            comfort_heat = self._status.comfort_heat if self._status else None
-            comfort_cool = self._status.comfort_cool if self._status else None
+        eco_heat = self._status.eco_heat if self._status else None
+        eco_cool = self._status.eco_cool if self._status else None
+        comfort_heat = self._status.comfort_heat if self._status else None
+        comfort_cool = self._status.comfort_cool if self._status else None
 
-            self._temperature_modifiers = {
-                SpecialStatus.ECO: TemperatureModifiers(eco_heat, eco_cool),
-                SpecialStatus.COMFORT: TemperatureModifiers(comfort_heat, comfort_cool),
-            }
+        self._temperature_modifiers = {
+            SpecialStatus.ECO: TemperatureModifiers(eco_heat, eco_cool),
+            SpecialStatus.COMFORT: TemperatureModifiers(comfort_heat, comfort_cool),
+        }
 
     @property
     def zone_id(self) -> int:
@@ -383,8 +436,18 @@ class DeviceZone:
 
     @property
     def name(self) -> str:
-        """Zone name"""
+        """Zone name: the user-given ``zoneName`` if reported, else ``Zone N``"""
         return self._info.name
+
+    @property
+    def zone_type_id(self) -> int | None:
+        """Raw ``zoneType`` value reported by the device (meaning unverified)"""
+        return self._info.zone_type_id
+
+    @property
+    def zone_sensor_id(self) -> int | None:
+        """Raw ``zoneSensor`` value reported by the device"""
+        return self._info.zone_sensor_id
 
     @property
     def operation_status(self) -> OperationStatus:
@@ -537,10 +600,64 @@ class Tank(ABC):
             await self.__set_operation_status__(OperationStatus.ON)
 
 
+def merge_zone_infos(
+    info_zones: list[DeviceZoneInfo], status: DeviceStatus
+) -> list[DeviceZoneInfo]:
+    """Zone descriptions for a device, with the device status as the source of truth.
+
+    ``/device/group`` lists placeholder zones (a bare ``{"zoneId": 2}`` for an
+    unconfigured zone 2) and has no names, types or sensors; the status
+    ``zoneStatus[]`` lists only the configured zones, with ``zoneName``,
+    ``zoneType`` and ``zoneSensor``. When the status has zones they decide which
+    zones exist; otherwise the ``info_zones`` are kept as they are.
+
+    Cooling: the status ``coolMode`` decides when present (non-zero = cooling
+    capable; the meaning of the individual values is unverified). Without it the
+    old heuristic is used: the device list said so, or the zone reports a
+    cooling setpoint range.
+    """
+    status_zones = [z for z in status.zones if z.zone_id is not None]
+    if not status_zones:
+        return list(info_zones)
+
+    by_id = {zone.zone_id: zone for zone in info_zones}
+    merged: list[DeviceZoneInfo] = []
+    for zone_status in status_zones:
+        base = by_id.get(zone_status.zone_id)
+        if status.cool_mode is not None:
+            cool_mode = bool(status.cool_mode)
+        else:
+            cool_mode = bool(base and base.cool_mode) or (
+                zone_status.cool_min is not None and zone_status.cool_max is not None
+            )
+        if zone_status.zone_sensor_id is not None:
+            zone_sensor = ZONE_SENSOR_IDS.get(zone_status.zone_sensor_id, ZoneSensor.UNKNOWN)
+        elif base is not None and isinstance(base.zone_sensor, ZoneSensor):
+            zone_sensor = base.zone_sensor
+        else:
+            zone_sensor = ZoneSensor.UNKNOWN
+        merged.append(
+            DeviceZoneInfo(
+                zone_id=zone_status.zone_id,
+                name=zone_status.name
+                or (base.name if base else None)
+                or f"Zone {zone_status.zone_id}",
+                type=base.type if base else ZoneType.UNKNOWN,
+                cool_mode=cool_mode,
+                zone_sensor=zone_sensor,
+                heat_sensor=base.heat_sensor if base else SensorMode.DIRECT,
+                cool_sensor=base.cool_sensor if base else SensorMode.DIRECT,
+                zone_type_id=zone_status.zone_type_id,
+                zone_sensor_id=zone_status.zone_sensor_id,
+            )
+        )
+    return merged
+
+
 class Device(ABC):
     """Aquarea Device"""
 
-    _zones: dict[int, DeviceZone] = {}
+    _zones: dict[int, DeviceZone]
 
     def __init__(self, info: DeviceInfo, status: DeviceStatus) -> None:
         self._info = info  # Store the DeviceInfo object
@@ -550,16 +667,20 @@ class Device(ABC):
         )
         self._tank: Tank | None = None
         self._consumption: dict[datetime, Consumption] = LimitedSizeDict(5)
-        self.__build_zones__(info.zones)  # Use info.zones directly
+        self._zones = {}
+        self.__build_zones__(info.zones)
 
     def __build_zones__(self, zones_info: list[DeviceZoneInfo]) -> None:
-        for zone in zones_info:
+        """(Re)build the zones from the device list zones and the current status."""
+        zones: dict[int, DeviceZone] = {}
+        for zone in merge_zone_infos(zones_info, self._status):
             zone_id = zone.zone_id
             # pylint: disable=cell-var-from-loop
             zone_status = next(
                 filter(lambda z: z.zone_id == zone_id, self._status.zones), None
             )
-            self._zones[zone_id] = DeviceZone(zone, zone_status)
+            zones[zone_id] = DeviceZone(zone, zone_status)
+        self._zones = zones
 
     @abstractmethod
     async def refresh_data(self) -> None:
@@ -612,7 +733,13 @@ class Device(ABC):
 
     @property
     def has_tank(self) -> bool:
-        """True if the device has a tank"""
+        """True if the device has a tank.
+
+        Uses the status ``tank`` flag (together with a reported ``tankStatus``)
+        when present, else the device list's ``tankStatus``.
+        """
+        if self._status.tank_flag is not None:
+            return bool(self._status.tank_flag) and bool(self._status.tank_status)
         return self._info.has_tank
 
     @property
@@ -626,6 +753,78 @@ class Device(ABC):
     def water_pressure(self) -> float | None:
         """The water circuit pressure in bar, if the device reports it"""
         return self._status.water_pressure
+
+    @property
+    def status_data_mode(self) -> StatusDataMode:
+        """LIVE, or CACHED when the live read failed and the cached status was used
+        (the cached status has no water pressure)"""
+        return self._status.data_mode
+
+    @property
+    def connection_status(self) -> int | None:
+        """``connectionStatus`` from the device list (0 seen while reachable)"""
+        return self._info.connection_status
+
+    @property
+    def dhw_flag(self) -> bool | None:
+        """``dhwFlg`` from the device list (semantics unverified)"""
+        return self._info.dhw_flag
+
+    @property
+    def cool_mode(self) -> int | None:
+        """Raw ``coolMode`` value (non-zero on cooling capable units, unverified)"""
+        return self._status.cool_mode
+
+    @property
+    def bivalent(self) -> int | None:
+        """Raw ``bivalent`` value: a second heat source is configured (unverified)"""
+        return self._status.bivalent
+
+    @property
+    def bivalent_actual(self) -> int | None:
+        """Raw ``bivalentActual`` value: the second heat source is active (unverified)"""
+        return self._status.bivalent_actual
+
+    @property
+    def external_heater(self) -> int | None:
+        """Raw ``externalHeater`` value"""
+        return self._status.external_heater
+
+    @property
+    def electric_anode(self) -> int | None:
+        """Raw ``electricAnode`` value (tank anti-corrosion anode)"""
+        return self._status.electric_anode
+
+    @property
+    def control_box(self) -> int | None:
+        """Raw ``controlBox`` value (optional control box present)"""
+        return self._status.control_box
+
+    @property
+    def uncontrollable(self) -> bool | None:
+        """``uncontrollableTaw1Flg``: the adapter reports it cannot be controlled
+        (unverified)"""
+        return self._status.uncontrollable
+
+    @property
+    def service_type(self) -> str | None:
+        """``serviceType``: adapter / service type, for example ``STD_ADP-TAW1``"""
+        return self._status.service_type
+
+    @property
+    def multi_od_connection(self) -> int | None:
+        """Raw ``multiOdConnection`` value (multiple outdoor units)"""
+        return self._status.multi_od_connection
+
+    @property
+    def model_series_selection(self) -> int | None:
+        """Raw ``modelSeriesSelection`` value"""
+        return self._status.model_series_selection
+
+    @property
+    def stand_alone(self) -> int | None:
+        """Raw ``standAlone`` value"""
+        return self._status.stand_alone
 
     @property
     def pump_duty(self) -> int:
@@ -722,15 +921,29 @@ class Device(ABC):
         if not self.support_special_status:
             raise Exception("Device does not support special status")
 
+        # Nothing to do when the device already has this preset (None = no
+        # preset, which is what the status reports as specialStatus 0).
         if self.special_status == special_status:
             return
 
         zones: list[ZoneTemperatureSetUpdate] = [
             self.__calculate_zone_special_status_update__(zone, special_status)
             for zone in self.zones.values()
+            if zone.supports_special_status
         ]
 
         await self.__set_special_status__(special_status, zones)
+
+        # Keep the local state in step until the next refresh, so a second
+        # change undoes this preset's offset instead of stacking on top of it.
+        self._status.special_status = special_status
+        for update in zones:
+            zone_status = next(
+                (z for z in self._status.zones if z.zone_id == update.zone_id), None
+            )
+            if zone_status is not None:
+                zone_status.heat_set = update.heat_set
+                zone_status.cool_set = update.cool_set
 
     @abstractmethod
     async def __set_special_status__(
@@ -756,33 +969,22 @@ class Device(ABC):
         cool_set = zone.cool_target_temperature
         heat_set = zone.heat_target_temperature
 
-        """If the zone is already on a special status, we need to revert the temperature to normal first"""
+        def shift(value, modifier, sign, low, high):
+            if value is None or modifier is None:
+                return value
+            return limit_range(value + sign * modifier, low, high)
+
+        # If the zone is already on a special status, revert its offset first
         if current_status is not None:
             modifiers = zone.temperature_modifiers[current_status]
-            cool_set = (
-                limit_range(cool_set - modifiers.cool, zone.cool_min, zone.cool_max)
-                if cool_set is not None
-                else None
-            )
-            heat_set = (
-                limit_range(heat_set - modifiers.heat, zone.heat_min, zone.heat_max)
-                if heat_set is not None
-                else None
-            )
+            cool_set = shift(cool_set, modifiers.cool, -1, zone.cool_min, zone.cool_max)
+            heat_set = shift(heat_set, modifiers.heat, -1, zone.heat_min, zone.heat_max)
 
-        """If we're setting a special status, we need to apply the modifiers"""
+        # Then apply the offset of the new special status
         if special_status is not None:
             modifiers = zone.temperature_modifiers[special_status]
-            cool_set = (
-                limit_range(cool_set + modifiers.cool, zone.cool_min, zone.cool_max)
-                if cool_set is not None
-                else None
-            )
-            heat_set = (
-                limit_range(heat_set + modifiers.heat, zone.heat_min, zone.heat_max)
-                if heat_set is not None
-                else None
-            )
+            cool_set = shift(cool_set, modifiers.cool, 1, zone.cool_min, zone.cool_max)
+            heat_set = shift(heat_set, modifiers.heat, 1, zone.heat_min, zone.heat_max)
 
         return ZoneTemperatureSetUpdate(zone.zone_id, cool_set, heat_set)
 
