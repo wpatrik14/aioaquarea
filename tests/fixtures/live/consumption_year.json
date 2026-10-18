@@ -1,0 +1,249 @@
+{
+ "ownerFlg": true,
+ "deviceRegisterTime": "20240801",
+ "elecMeterHp": 0,
+ "multiOdConnection": 0,
+ "electricRate": {
+  "weekdayBaseRate": 0.25,
+  "currency": "EUR",
+  "weekendBaseRate": 0.25
+ },
+ "historyDataList": [
+  {
+   "dataTime": "202502",
+   "heatConsumption": 412.753,
+   "heatCost": 103.1882,
+   "coolConsumption": 0.0,
+   "coolCost": 0.0,
+   "tankConsumption": 63.244,
+   "tankCost": 15.811,
+   "outdoorTemp": 3.25
+  },
+  {
+   "dataTime": "202503",
+   "heatConsumption": 176.914,
+   "heatCost": 44.2285,
+   "coolConsumption": 0.0,
+   "coolCost": 0.0,
+   "tankConsumption": 57.097,
+   "tankCost": 14.2743,
+   "outdoorTemp": 10.25
+  },
+  {
+   "dataTime": "202504",
+   "heatConsumption": 56.241,
+   "heatCost": 14.0602,
+   "coolConsumption": 0.0,
+   "coolCost": 0.0,
+   "tankConsumption": 44.172,
+   "tankCost": 11.043,
+   "outdoorTemp": 15.5
+  },
+  {
+   "dataTime": "202505",
+   "heatConsumption": 7.832,
+   "heatCost": 1.958,
+   "coolConsumption": 0.401,
+   "coolCost": 0.1003,
+   "tankConsumption": 52.455,
+   "tankCost": 13.1137,
+   "outdoorTemp": 17.5
+  },
+  {
+   "dataTime": "202506",
+   "heatConsumption": 0.002,
+   "heatCost": 0.0005,
+   "coolConsumption": 51.12,
+   "coolCost": 12.78,
+   "tankConsumption": 31.64,
+   "tankCost": 7.91,
+   "outdoorTemp": 25.5
+  },
+  {
+   "dataTime": "202507",
+   "heatConsumption": 3.322,
+   "heatCost": 0.8305,
+   "coolConsumption": 55.298,
+   "coolCost": 13.8245,
+   "tankConsumption": 53.043,
+   "tankCost": 13.2607,
+   "outdoorTemp": 25.0
+  },
+  {
+   "dataTime": "202508",
+   "heatConsumption": 0.004,
+   "heatCost": 0.001,
+   "coolConsumption": 74.975,
+   "coolCost": 18.7437,
+   "tankConsumption": 60.971,
+   "tankCost": 15.2427,
+   "outdoorTemp": 24.5
+  },
+  {
+   "dataTime": "202509",
+   "heatConsumption": 0.023,
+   "heatCost": 0.0057,
+   "coolConsumption": 18.922,
+   "coolCost": 4.7305,
+   "tankConsumption": 39.412,
+   "tankCost": 9.853,
+   "outdoorTemp": 20.25
+  },
+  {
+   "dataTime": "202510",
+   "heatConsumption": 90.601,
+   "heatCost": 22.6502,
+   "coolConsumption": 0.0,
+   "coolCost": 0.0,
+   "tankConsumption": 67.074,
+   "tankCost": 16.7685,
+   "outdoorTemp": 13.25
+  },
+  {
+   "dataTime": "202511",
+   "heatConsumption": 260.019,
+   "heatCost": 65.0048,
+   "coolConsumption": 0.0,
+   "coolCost": 0.0,
+   "tankConsumption": 67.761,
+   "tankCost": 16.9402,
+   "outdoorTemp": 7.75
+  },
+  {
+   "dataTime": "202512",
+   "heatConsumption": 450.528,
+   "heatCost": 112.632,
+   "coolConsumption": 0.0,
+   "coolCost": 0.0,
+   "tankConsumption": 65.939,
+   "tankCost": 16.4847,
+   "outdoorTemp": 4.5
+  },
+  {
+   "dataTime": "202601",
+   "heatConsumption": 801.206,
+   "heatCost": 200.3015,
+   "coolConsumption": 0.0,
+   "coolCost": 0.0,
+   "tankConsumption": 150.742,
+   "tankCost": 37.6855,
+   "outdoorTemp": 0.25
+  }
+ ],
+ "lastYearHistoryDataList": [
+  {
+   "dataTime": "202402",
+   "heatConsumption": 0.0,
+   "heatCost": 0.0,
+   "coolConsumption": 0.0,
+   "coolCost": 0.0,
+   "tankConsumption": 0.0,
+   "tankCost": 0.0
+  },
+  {
+   "dataTime": "202403",
+   "heatConsumption": 0.0,
+   "heatCost": 0.0,
+   "coolConsumption": 0.0,
+   "coolCost": 0.0,
+   "tankConsumption": 0.0,
+   "tankCost": 0.0
+  },
+  {
+   "dataTime": "202404",
+   "heatConsumption": 0.0,
+   "heatCost": 0.0,
+   "coolConsumption": 0.0,
+   "coolCost": 0.0,
+   "tankConsumption": 0.0,
+   "tankCost": 0.0
+  },
+  {
+   "dataTime": "202405",
+   "heatConsumption": 0.0,
+   "heatCost": 0.0,
+   "coolConsumption": 0.0,
+   "coolCost": 0.0,
+   "tankConsumption": 0.0,
+   "tankCost": 0.0
+  },
+  {
+   "dataTime": "202406",
+   "heatConsumption": 0.0,
+   "heatCost": 0.0,
+   "coolConsumption": 0.0,
+   "coolCost": 0.0,
+   "tankConsumption": 0.0,
+   "tankCost": 0.0
+  },
+  {
+   "dataTime": "202407",
+   "heatConsumption": 0.0,
+   "heatCost": 0.0,
+   "coolConsumption": 0.0,
+   "coolCost": 0.0,
+   "tankConsumption": 0.0,
+   "tankCost": 0.0
+  },
+  {
+   "dataTime": "202408",
+   "heatConsumption": 0.005,
+   "heatCost": 0.0013,
+   "coolConsumption": 25.872,
+   "coolCost": 6.468,
+   "tankConsumption": 8.07,
+   "tankCost": 2.0175,
+   "outdoorTemp": 27.5
+  },
+  {
+   "dataTime": "202409",
+   "heatConsumption": 13.184,
+   "heatCost": 3.296,
+   "coolConsumption": 19.616,
+   "coolCost": 4.904,
+   "tankConsumption": 45.488,
+   "tankCost": 11.372,
+   "outdoorTemp": 19.75
+  },
+  {
+   "dataTime": "202410",
+   "heatConsumption": 35.114,
+   "heatCost": 8.7785,
+   "coolConsumption": 0.0,
+   "coolCost": 0.0,
+   "tankConsumption": 46.994,
+   "tankCost": 11.7485,
+   "outdoorTemp": 14.0
+  },
+  {
+   "dataTime": "202411",
+   "heatConsumption": 255.587,
+   "heatCost": 63.8967,
+   "coolConsumption": 0.0,
+   "coolCost": 0.0,
+   "tankConsumption": 50.616,
+   "tankCost": 12.654,
+   "outdoorTemp": 6.5
+  },
+  {
+   "dataTime": "202412",
+   "heatConsumption": 408.814,
+   "heatCost": 102.2035,
+   "coolConsumption": 0.0,
+   "coolCost": 0.0,
+   "tankConsumption": 83.825,
+   "tankCost": 20.9563,
+   "outdoorTemp": 4.0
+  },
+  {
+   "dataTime": "202501",
+   "heatConsumption": 401.317,
+   "heatCost": 100.3293,
+   "coolConsumption": 0.0,
+   "coolCost": 0.0,
+   "tankConsumption": 58.917,
+   "tankCost": 14.7293,
+   "outdoorTemp": 5.0
+  }
+ ]
+}

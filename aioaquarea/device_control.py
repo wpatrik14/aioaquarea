@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .auth import PanasonicRequestHeader
-from .const import AQUAREA_SERVICE_A2W_STATUS_DISPLAY, AQUAREA_SERVICE_DEVICES
 from .data import (
     DeviceZoneStatus,
     ForceDHW,
@@ -28,27 +26,30 @@ class AquareaDeviceControl:
         self._api_client = api_client
         self._base_url = base_url
 
+    async def _post_transfer_update(self, long_device_id: str, body: dict) -> None:
+        """Send a partial device update through the common/transfer proxy."""
+        await self._api_client.request(
+            "POST",
+            url="remote/v1/app/common/transfer",
+            json={
+                "apiName": "/remote/v1/api/devices",
+                "requestMethod": "POST",
+                "bodyParam": {"gwid": long_device_id, **body},
+            },
+            throw_on_error=True,
+        )
+
     async def post_device_operation_status(
         self, long_device_id: str, new_operation_status: OperationStatus
     ) -> None:
-        """Post device operation status."""
-        data = {
-            "status": [
-                {
-                    "deviceGuid": long_device_id,
-                    "operationStatus": new_operation_status.value,
-                }
-            ]
-        }
+        """Turn the whole device on or off.
 
-        await self._api_client.request(
-            "POST",
-            f"{AQUAREA_SERVICE_DEVICES}/{long_device_id}",
-            headers=PanasonicRequestHeader.get_aqua_headers(
-                content_type="application/json",
-                referer=f"{self._base_url}{AQUAREA_SERVICE_A2W_STATUS_DISPLAY}",
-            ),
-            json=data,
+        Sent through the common/transfer proxy like every other control: the
+        old ``/remote/v1/api/devices/{id}`` route of Aquarea Smart Cloud is
+        gone (see docs/api-map.md). Not verified against a live unit.
+        """
+        await self._post_transfer_update(
+            long_device_id, {"operationStatus": new_operation_status.value}
         )
 
     async def post_device_tank_temperature(
@@ -159,37 +160,26 @@ class AquareaDeviceControl:
         special_status: SpecialStatus | None,
         zones: list[ZoneTemperatureSetUpdate],
     ) -> None:
-        """Post device operation update."""
-        data = {
-            "status": [
-                {
-                    "deviceGuid": long_id,
-                    "specialStatus": special_status.value if special_status else 0,
-                    "zoneStatus": [
-                        {
-                            "zoneId": zone.zone_id,
-                            "heatSet": zone.heat_set,
-                            **(
-                                {"coolSet": zone.cool_set}
-                                if zone.cool_set is not None
-                                else {}
-                            ),
-                        }
-                        for zone in zones
-                    ],
-                }
-            ]
-        }
+        """Set the eco/comfort preset (None = no preset) with the zone setpoints.
 
-        await self._api_client.request(
-            "POST",
-            f"{AQUAREA_SERVICE_DEVICES}/{long_id}",
-            headers=PanasonicRequestHeader.get_aqua_headers(
-                content_type="application/json",
-                referer=f"{self._base_url}{AQUAREA_SERVICE_A2W_STATUS_DISPLAY}",
-            ),
-            json=data,
-        )
+        The app sends the preset together with each zone's recalculated
+        setpoints. Sent through the common/transfer proxy like the other
+        controls (the old ``/remote/v1/api/devices/{id}`` route is gone). Not
+        verified against a live unit.
+        """
+        zone_status = []
+        for zone in zones:
+            zone_update: dict = {"zoneId": zone.zone_id}
+            if zone.heat_set is not None:
+                zone_update["heatSet"] = zone.heat_set
+            if zone.cool_set is not None:
+                zone_update["coolSet"] = zone.cool_set
+            zone_status.append(zone_update)
+
+        body: dict = {"specialStatus": special_status.value if special_status else 0}
+        if zone_status:
+            body["zoneStatus"] = zone_status
+        await self._post_transfer_update(long_id, body)
 
     async def post_device_zone_heat_temperature(
         self, long_id: str, zone_id: int, temperature: int

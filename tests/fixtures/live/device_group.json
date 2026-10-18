@@ -1,0 +1,40 @@
+{
+ "a2wStatus": {
+  "statusCode": 200
+ },
+ "uiFlg": false,
+ "groupCount": 1,
+ "groupList": [
+  {
+   "groupId": 1,
+   "groupName": "Home",
+   "pairingList": [],
+   "deviceList": [
+    {
+     "deviceGuid": "009A2W0000000001",
+     "deviceType": "2",
+     "deviceName": "Heat pump",
+     "a2wOwnerFlg": true,
+     "dhwFlg": false,
+     "connectionStatus": 0,
+     "operationMode": 1,
+     "zoneStatus": [
+      {
+       "zoneId": 1,
+       "operationStatus": 0,
+       "temperature": 30
+      },
+      {
+       "zoneId": 2
+      }
+     ],
+     "tankStatus": {
+      "operationStatus": 0,
+      "temperature": 48,
+      "temperatureNow": 32
+     }
+    }
+   ]
+  }
+ ]
+}

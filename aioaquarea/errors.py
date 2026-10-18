@@ -43,6 +43,26 @@ class AuthenticationError(ApiError):
         return f"Authentication error: {self.error_code} - {self.error_message}"
 
 
+class AgreementNotAcceptedError(ApiError):
+    """Panasonic updated its terms or privacy policy (error code 4103).
+
+    Every request fails until the updated agreements are accepted, which has to
+    be done in the Panasonic Comfort Cloud app; logging in again does not help.
+    ``Client.get_agreement_status()`` lists the agreement versions the account
+    has accepted.
+    """
+
+    AGREEMENT_ERROR_CODE = "4103"
+
+    def __init__(self, error_message: str | None = None):
+        super().__init__(
+            self.AGREEMENT_ERROR_CODE,
+            error_message
+            or "Panasonic terms or privacy policy changed: open the Panasonic "
+            "Comfort Cloud app and accept them",
+        )
+
+
 class MfaRequiredError(AuthenticationError):
     """The login needs a multi-factor code: pass it to ``Client.complete_mfa``.
 

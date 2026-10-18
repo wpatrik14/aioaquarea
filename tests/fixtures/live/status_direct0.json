@@ -1,0 +1,58 @@
+{
+ "operation": "FFFFFFFF",
+ "ownerFlg": true,
+ "a2wName": "Heat pump",
+ "step2ApplicationStatusFlg": false,
+ "status": {
+  "serviceType": "STD_ADP-TAW1",
+  "uncontrollableTaw1Flg": false,
+  "operationMode": 1,
+  "coolMode": 2,
+  "direction": 0,
+  "quietMode": 0,
+  "powerful": 0,
+  "forceDHW": 0,
+  "forceHeater": 0,
+  "tank": 1,
+  "multiOdConnection": 0,
+  "pumpDuty": 0,
+  "bivalent": 0,
+  "bivalentActual": 0,
+  "electricAnode": 0,
+  "deiceStatus": 0,
+  "specialStatus": 0,
+  "outdoorNow": 18,
+  "holidayTimer": 0,
+  "modelSeriesSelection": 1,
+  "standAlone": 0,
+  "controlBox": 0,
+  "externalHeater": 0,
+  "zoneStatus": [
+   {
+    "zoneId": 1,
+    "zoneName": "Buffer",
+    "zoneType": 0,
+    "zoneSensor": 0,
+    "operationStatus": 0,
+    "temperatureNow": 26,
+    "heatMin": 20,
+    "heatMax": 55,
+    "coolMin": 5,
+    "coolMax": 20,
+    "heatSet": 30,
+    "coolSet": 16,
+    "ecoHeat": -5,
+    "ecoCool": 5,
+    "comfortHeat": 5,
+    "comfortCool": -5
+   }
+  ],
+  "tankStatus": {
+   "operationStatus": 0,
+   "temperatureNow": 32,
+   "heatMin": 40,
+   "heatMax": 75,
+   "heatSet": 48
+  }
+ }
+}

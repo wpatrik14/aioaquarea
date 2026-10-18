@@ -22,10 +22,14 @@ from .data import (
     PumpDuty,
     QuietMode,
     SpecialStatus,
+    StatusDataMode,
     Tank,
     UpdateOperationMode,
+    ZoneSensor,
+    ZoneType,
 )
 from .errors import (
+    AgreementNotAcceptedError,
     ApiError,
     AuthenticationError,
     AuthenticationErrorCodes,
@@ -35,7 +39,20 @@ from .errors import (
     RequestFailedError,
 )
 from .mfa import MfaChallenge
-from .statistics import Consumption, ConsumptionType, DateType
+from .statistics import (
+    Consumption,
+    ConsumptionReport,
+    ConsumptionType,
+    DateType,
+    ElectricRate,
+)
+from .weekly_timer import (
+    SetpointLimits,
+    WeeklyTimer,
+    WeeklyTimerDay,
+    WeeklyTimerSlot,
+    WeeklyTimerZoneSetting,
+)
 
 __all__: Tuple[str, ...] = (
     "Client",  # Keep "Client" in __all__ as it's aliased
@@ -68,4 +85,15 @@ __all__: Tuple[str, ...] = (
     "SpecialStatus",
     "MfaChallenge",
     "MfaRequiredError",
+    "AgreementNotAcceptedError",
+    "ConsumptionReport",
+    "ElectricRate",
+    "StatusDataMode",
+    "ZoneSensor",
+    "ZoneType",
+    "WeeklyTimer",
+    "WeeklyTimerDay",
+    "WeeklyTimerSlot",
+    "WeeklyTimerZoneSetting",
+    "SetpointLimits",
 )

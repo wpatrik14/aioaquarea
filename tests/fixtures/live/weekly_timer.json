@@ -1,0 +1,211 @@
+{
+ "weeklyTimer": {
+  "operation": 0,
+  "timer": [
+   {
+    "patternList": [
+     {
+      "mode": 3,
+      "tankOnOff": 1,
+      "tankTemperature": 45,
+      "zone1Cool": 18,
+      "zone1OnOff": 1,
+      "startTime": "16:45",
+      "zone1Heat": 31
+     },
+     {
+      "mode": 3,
+      "tankOnOff": 0,
+      "tankTemperature": 45,
+      "zone1Cool": 18,
+      "zone1OnOff": 1,
+      "startTime": "19:00",
+      "zone1Heat": 31
+     },
+     {},
+     {},
+     {},
+     {}
+    ]
+   },
+   {
+    "patternList": [
+     {
+      "mode": 3,
+      "tankOnOff": 1,
+      "tankTemperature": 45,
+      "zone1Cool": 18,
+      "zone1OnOff": 1,
+      "startTime": "16:45",
+      "zone1Heat": 31
+     },
+     {
+      "mode": 3,
+      "tankOnOff": 0,
+      "tankTemperature": 45,
+      "zone1Cool": 18,
+      "zone1OnOff": 1,
+      "startTime": "19:00",
+      "zone1Heat": 31
+     },
+     {},
+     {},
+     {},
+     {}
+    ]
+   },
+   {
+    "patternList": [
+     {
+      "mode": 3,
+      "tankOnOff": 1,
+      "tankTemperature": 45,
+      "zone1Cool": 18,
+      "zone1OnOff": 1,
+      "startTime": "16:45",
+      "zone1Heat": 31
+     },
+     {
+      "mode": 3,
+      "tankOnOff": 0,
+      "tankTemperature": 45,
+      "zone1Cool": 18,
+      "zone1OnOff": 1,
+      "startTime": "19:00",
+      "zone1Heat": 31
+     },
+     {},
+     {},
+     {},
+     {}
+    ]
+   },
+   {
+    "patternList": [
+     {
+      "mode": 3,
+      "tankOnOff": 1,
+      "tankTemperature": 45,
+      "zone1Cool": 18,
+      "zone1OnOff": 1,
+      "startTime": "16:45",
+      "zone1Heat": 31
+     },
+     {
+      "mode": 3,
+      "tankOnOff": 0,
+      "tankTemperature": 45,
+      "zone1Cool": 18,
+      "zone1OnOff": 1,
+      "startTime": "19:00",
+      "zone1Heat": 31
+     },
+     {},
+     {},
+     {},
+     {}
+    ]
+   },
+   {
+    "patternList": [
+     {
+      "mode": 3,
+      "tankOnOff": 1,
+      "tankTemperature": 45,
+      "zone1Cool": 18,
+      "zone1OnOff": 1,
+      "startTime": "16:45",
+      "zone1Heat": 31
+     },
+     {
+      "mode": 3,
+      "tankOnOff": 0,
+      "tankTemperature": 45,
+      "zone1Cool": 18,
+      "zone1OnOff": 1,
+      "startTime": "19:00",
+      "zone1Heat": 31
+     },
+     {},
+     {},
+     {},
+     {}
+    ]
+   },
+   {
+    "patternList": [
+     {
+      "mode": 3,
+      "tankOnOff": 1,
+      "tankTemperature": 45,
+      "zone1Cool": 18,
+      "zone1OnOff": 1,
+      "startTime": "16:45",
+      "zone1Heat": 31
+     },
+     {
+      "mode": 3,
+      "tankOnOff": 0,
+      "tankTemperature": 45,
+      "zone1Cool": 18,
+      "zone1OnOff": 1,
+      "startTime": "19:00",
+      "zone1Heat": 31
+     },
+     {},
+     {},
+     {},
+     {}
+    ]
+   },
+   {
+    "patternList": [
+     {
+      "mode": 3,
+      "tankOnOff": 1,
+      "tankTemperature": 45,
+      "zone1Cool": 18,
+      "zone1OnOff": 1,
+      "startTime": "16:45",
+      "zone1Heat": 31
+     },
+     {
+      "mode": 3,
+      "tankOnOff": 0,
+      "tankTemperature": 45,
+      "zone1Cool": 18,
+      "zone1OnOff": 1,
+      "startTime": "19:00",
+      "zone1Heat": 31
+     },
+     {},
+     {},
+     {},
+     {}
+    ]
+   }
+  ]
+ },
+ "status": {
+  "zoneStatus": [
+   {
+    "zoneId": 1,
+    "heatMin": 20,
+    "heatMax": 55,
+    "coolMin": 5,
+    "coolMax": 20
+   },
+   {
+    "zoneId": 2,
+    "heatMin": -5,
+    "heatMax": 5,
+    "coolMin": -5,
+    "coolMax": 5
+   }
+  ],
+  "tankStatus": {
+   "heatMin": 40,
+   "heatMax": 75
+  }
+ }
+}

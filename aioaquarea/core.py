@@ -40,7 +40,8 @@ from .device_manager import DeviceManager
 from .entities import DeviceImpl
 from .errors import AuthenticationError, AuthenticationErrorCodes
 from .mfa import MfaChallenge
-from .statistics import Consumption, DateType
+from .statistics import Consumption, ConsumptionReport, DateType
+from .weekly_timer import WeeklyTimer
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -371,6 +372,7 @@ class AquareaClient:  # Renamed Client to AquareaClient
             self,
             consumption_refresh_interval,
             timezone,
+            device_info=device_info,
         )
         # Ensure consumption data is refreshed during initial device setup
         if consumption_refresh_interval:
@@ -516,6 +518,30 @@ class AquareaClient:  # Renamed Client to AquareaClient
         return await self._consumption_manager.get_device_consumption(
             long_id, aggregation, date_input
         )
+
+    @auth_required
+    async def get_device_consumption_report(
+        self, long_id: str, aggregation: DateType, date_input: str
+    ) -> ConsumptionReport | None:
+        """Get the full consumption response: buckets, last year's buckets
+        (YEAR only) and the tariff/currency. See ``ConsumptionReport``."""
+        return await self._consumption_manager.get_device_consumption_report(
+            long_id, aggregation, date_input
+        )
+
+    @auth_required
+    async def get_weekly_timer(self, long_id: str) -> WeeklyTimer:
+        """Read the weekly schedule of a device (read only)."""
+        return await self._device_manager.get_weekly_timer(long_id)
+
+    @auth_required
+    async def get_agreement_status(self) -> list[dict]:
+        """Agreement types/versions the account has accepted (``/auth/v2/agreement/status``).
+
+        Requests fail with ``AgreementNotAcceptedError`` (code 4103) when
+        Panasonic published new terms; they are accepted in the Comfort Cloud app.
+        """
+        return await self._device_manager.get_agreement_status()
 
     async def close(self) -> None:
         """Close the aiohttp session, only if this client created it."""
