@@ -131,12 +131,16 @@ def call_count(m: aioresponses) -> int:
 
 @pytest.fixture(autouse=True)
 def no_app_store(monkeypatch):
-    """Never contact the App Store."""
+    """Never contact the app stores or the version gate.
+
+    Also forgets the app version the gate accepted in an earlier test.
+    """
 
     async def fake_refresh(self):
         return None
 
     monkeypatch.setattr(CCAppVersion, "refresh", fake_refresh)
+    monkeypatch.setattr(CCAppVersion, "_process_good", None)
 
 
 @pytest.fixture

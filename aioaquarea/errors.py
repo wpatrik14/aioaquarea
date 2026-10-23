@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import StrEnum
 
 from .mfa import MfaChallenge
@@ -41,6 +42,28 @@ class AuthenticationError(ApiError):
 
     def __str__(self) -> str:
         return f"Authentication error: {self.error_code} - {self.error_message}"
+
+
+class AppVersionRejectedError(AuthenticationError):
+    """Panasonic rejected the app version (error code 4106), not the credentials.
+
+    Raised when every candidate ``x-app-version`` is rejected by the login gate
+    (or the gate rejects the freshly chosen one). Logging in again or changing
+    the password does not help: the library has to be updated, because Panasonic
+    changed the version it accepts. Subclass of ``AuthenticationError`` with
+    ``error_code`` ``APP_VERSION_REJECTED``, so callers that only know the plain
+    error keep working.
+    """
+
+    def __init__(self, versions_tried: Sequence[str] = ()):
+        tried = ", ".join(versions_tried) or "none"
+        super().__init__(
+            AuthenticationErrorCodes.APP_VERSION_REJECTED,
+            "The Panasonic server rejected the app version this library "
+            f"announces (code 4106; versions tried: {tried}); the credentials "
+            "were not checked. Update aioaquarea-ng.",
+        )
+        self.versions_tried = tuple(versions_tried)
 
 
 class AgreementNotAcceptedError(ApiError):
@@ -100,6 +123,7 @@ class AuthenticationErrorCodes(StrEnum):
     MFA_REQUIRED = "MFA_REQUIRED"
     MFA_INVALID_CODE = "MFA_INVALID_CODE"  # wrong code: may be retried
     MFA_EXPIRED = "MFA_EXPIRED"  # MFA transaction expired: log in again
+    APP_VERSION_REJECTED = "APP_VERSION_REJECTED"  # gate code 4106, not the credentials
 
 
 class DataNotAvailableError(Exception):
