@@ -5,7 +5,12 @@ import logging
 import pytest
 
 from aioaquarea import AuthenticationError, AuthenticationErrorCodes, Client, core
-from aioaquarea.auth import CCAppVersion, check_response
+from aioaquarea.auth import (
+    CCAppVersion,
+    PanasonicRequestHeader,
+    PanasonicSettings,
+    check_response,
+)
 from aioaquarea.const import DEFAULT_X_APP_VERSION
 
 from .conftest import (
@@ -179,12 +184,17 @@ async def test_no_secrets_in_logs_on_failures(client, mocked, caplog):
     assert PASSWORD not in text
 
 
-async def test_check_response_logs_only_metadata(mocked, session, caplog):
-    mocked.get("https://example.com/x", status=500, body="BODY-WITH-SECRET")
+async def test_check_response_logs_safe_api_code_only(mocked, session, caplog):
+    mocked.get(
+        "https://example.com/x",
+        status=500,
+        payload={"code": 4106, "message": "BODY-WITH-SECRET"},
+    )
     resp = await session.get("https://example.com/x")
     with pytest.raises(AuthenticationError):
         await check_response(resp, "step", 200)
     assert "BODY-WITH-SECRET" not in caplog.text
+    assert "4106" in caplog.text
     assert "step" in caplog.text
 
 
@@ -192,18 +202,25 @@ async def test_app_version_refresh(monkeypatch, mocked):
     monkeypatch.undo()  # use the real refresh
     version = CCAppVersion()
     assert await version.get() == DEFAULT_X_APP_VERSION
-    url = "https://apps.apple.com/de/app/panasonic-comfort-cloud/id1348640525"
-    mocked.get(url, body="<p>Version 9.8.7</p>")
+    url = "https://play.google.com/store/apps/details?id=com.panasonic.ACCsmart&hl=fr&gl=FR"
+    mocked.get(
+        url,
+        body='<script>[[["5.1.0"]],[[[35]],[[[29,"10"]]]]]</script>',
+    )
     await version.init()
-    assert await version.get() == "9.8.7"
+    assert await version.get() == "5.1.0"
+    settings = PanasonicSettings()
+    settings.access_token = "test-access-token"
+    headers = await PanasonicRequestHeader.get(settings, version)
+    assert headers["x-app-version"] == "5.1.0"
     mocked.get(url, body="nothing")
     await version.refresh()
-    assert await version.get() == "9.8.7"
+    assert await version.get() == "5.1.0"
     mocked.get(url, status=500)
     await version.refresh()
     mocked.get(url, exception=OSError("boom"))
     await version.refresh()
-    assert await version.get() == "9.8.7"
+    assert await version.get() == "5.1.0"
 
 
 async def test_new_app_version_published_triggers_refresh(client, mocked, monkeypatch):
