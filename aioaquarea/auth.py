@@ -58,17 +58,17 @@ class CCAppVersion:
         await self.refresh()
 
     async def refresh(self):
-        # Fetch the latest app version from App Store
+        # The API client identifies as Android, so use the Android app version.
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
-                    "https://apps.apple.com/de/app/panasonic-comfort-cloud/id1348640525"
+                    "https://play.google.com/store/apps/details"
+                    "?id=com.panasonic.ACCsmart&hl=fr&gl=FR"
                 ) as response:
                     if response.status == 200:
                         html_content = await response.text()
-                        # Look for version pattern in the HTML
                         version_match = re.search(
-                            r"Version\s+(\d+\.\d+\.\d+)", html_content
+                            r'\[\[\["(\d+\.\d+\.\d+)"\]\]', html_content
                         )
                         if version_match:
                             new_version = version_match.group(1)
@@ -76,11 +76,11 @@ class CCAppVersion:
                             self.version = new_version
                         else:
                             _LOGGER.warning(
-                                f"Could not parse version from App Store page, keeping current version: {self.version}"
+                                f"Could not parse version from Google Play page, keeping current version: {self.version}"
                             )
                     else:
                         _LOGGER.error(
-                            f"Failed to fetch App Store page: {response.status}, keeping current version: {self.version}"
+                            f"Failed to fetch Google Play page: {response.status}, keeping current version: {self.version}"
                         )
         except Exception as e:
             _LOGGER.error(
@@ -206,16 +206,28 @@ async def check_response(
 ):
     """Raise if the response status is not the expected one.
 
-    Only the step name, status and content type are logged: bodies can contain
-    credentials, tokens or session data.
+    Only the step name, status, content type and a safe API error code are
+    logged: response bodies can contain credentials, tokens or session data.
     """
     if response.status != expected_status:
+        try:
+            error_body = await response.json(content_type=None)
+        except (aiohttp.ClientError, ValueError):
+            error_body = None
+        error_code = error_body.get("code") if isinstance(error_body, dict) else None
+        if (
+            not isinstance(error_code, (str, int))
+            or isinstance(error_code, bool)
+            or not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", str(error_code))
+        ):
+            error_code = None
         _LOGGER.error(
-            "Error in %s: expected status %s, got %s (content-type: %s)",
+            "Error in %s: expected status %s, got %s (content-type: %s, api code: %s)",
             step_name,
             expected_status,
             response.status,
             response.headers.get("Content-Type", "unknown"),
+            error_code or "unknown",
         )
         response.release()
         raise AuthenticationError(
