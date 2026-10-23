@@ -26,6 +26,20 @@ INVALID_TEMPERATURE = 126
 
 DEFAULT_X_APP_VERSION = "4.4.0"
 
+# Versions the Panasonic gate (POST /auth/v2/login) is known to accept, newest
+# first. Used as probe candidates when the app stores cannot be read.
+FALLBACK_X_APP_VERSIONS = ("5.1.0", "4.4.0")
+GOOGLE_PLAY_APP_URL = (
+    "https://play.google.com/store/apps/details?id=com.panasonic.ACCsmart&hl=fr&gl=FR"
+)
+APP_STORE_LOOKUP_URL = "https://itunes.apple.com/lookup?id=1348640525"
+# Error codes of the app version gate, which runs before the token check: with a
+# dummy token an accepted version answers "token expired", a rejected one
+# "new version app has been published".
+GATE_CODE_VERSION_ACCEPTED = 4100
+GATE_CODE_VERSION_REJECTED = 4106
+APP_VERSION_PROBE_TIMEOUT = 10.0  # seconds, per request
+
 MAX_VERSION_AGE = 2
 
 SETTING_ACCESS_TOKEN = "access_token"

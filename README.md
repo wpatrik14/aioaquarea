@@ -111,6 +111,14 @@ except MfaRequiredError as err:
 
 **Avoiding MFA on every login:** the login asks for the `offline_access` scope, so the token response normally carries a refresh token. Store `client.refresh_token` (a secret) and pass it as `Client(session, username, password, refresh_token=...)`; `login()` then refreshes the token without the password or an MFA code, and only falls back to the password (and MFA) when Panasonic rejects the refresh token. The refresh token can rotate: pass `refresh_token_callback=` (a plain function taking the new token) to be told whenever a login or refresh returned a different one.
 
+## App version
+
+Panasonic's login gate rejects app versions it no longer accepts with HTTP 401 / code 4106 ("New version app has been published"), and the version shown in the app stores is not always the accepted one. So the library does not trust a single source: it probes the gate (with a dummy token, no credentials) with candidates from Google Play, the App Store, the last version that worked and built-in constants, and uses the first one the gate accepts. The result is cached for the lifetime of the process and re-checked once if a login gets a 4106. When every candidate is rejected, `Client.login()` raises `AppVersionRejectedError` (an `AuthenticationError` subclass, code `APP_VERSION_REJECTED`): that is a Panasonic-side change and not a credentials problem, and the fix is a new release of this library.
+
+### App version canary
+
+The workflow [`app-version-canary.yml`](.github/workflows/app-version-canary.yml) runs [`scripts/check_app_version_gate.py`](scripts/check_app_version_gate.py) daily (and on demand via "Run workflow"). It runs the same credential-free probe and, when every candidate version is rejected or the gate answers something unexpected, opens one issue titled "Panasonic gate rejects app version" with the `panasonic-gate` label (created if missing; no second issue while one is open). It uses no secrets, only the default token with `contents: read` and `issues: write`. Run it locally with `python scripts/check_app_version_gate.py` (exit code 0 = a version is accepted).
+
 ## Acknowledgements
 
 The original library is by [Carlos J. Aliaga](https://github.com/cjaliaga) ([cjaliaga/aioaquarea](https://github.com/cjaliaga/aioaquarea)), MIT licensed.

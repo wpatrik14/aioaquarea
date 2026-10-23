@@ -31,6 +31,7 @@ from .data import (
 from .errors import (
     AgreementNotAcceptedError,
     ApiError,
+    AppVersionRejectedError,
     AuthenticationError,
     AuthenticationErrorCodes,
     ClientError,
@@ -86,6 +87,7 @@ __all__: Tuple[str, ...] = (
     "MfaChallenge",
     "MfaRequiredError",
     "AgreementNotAcceptedError",
+    "AppVersionRejectedError",
     "ConsumptionReport",
     "ElectricRate",
     "StatusDataMode",

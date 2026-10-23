@@ -8,22 +8,37 @@ import secrets
 import string
 import time
 import urllib.parse
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import ClassVar
 
 import aiohttp
 from bs4 import BeautifulSoup
 
 from .const import (
     APP_CLIENT_ID,
+    APP_STORE_LOOKUP_URL,
+    APP_VERSION_PROBE_TIMEOUT,
     AUTH_0_CLIENT,
     AUTH_API_USER_AGENT,
     AUTH_BROWSER_USER_AGENT,
     BASE_PATH_ACC,
     BASE_PATH_AUTH,
     DEFAULT_X_APP_VERSION,
+    FALLBACK_X_APP_VERSIONS,
+    GATE_CODE_VERSION_ACCEPTED,
+    GATE_CODE_VERSION_REJECTED,
+    GOOGLE_PLAY_APP_URL,
     REDIRECT_URI,
     AquareaEnvironment,
 )
-from .errors import AuthenticationError, AuthenticationErrorCodes, MfaRequiredError
+from .errors import (
+    AppVersionRejectedError,
+    AuthenticationError,
+    AuthenticationErrorCodes,
+    MfaRequiredError,
+)
 from .mfa import MfaChallenge
 from .mfa_guardian import GuardianFlow, parse_guardian_page
 
@@ -49,43 +64,204 @@ class PanasonicSettings:
         self.scope = scope
 
 
+class GateOutcome(StrEnum):
+    """What the login gate said about one ``x-app-version``."""
+
+    ACCEPTED = "accepted"  # gate answered "token expires" (4100): version is fine
+    REJECTED = "rejected"  # gate answered "new version published" (4106)
+    UNEXPECTED = "unexpected"  # an answer, but neither of the two known ones
+    UNREACHABLE = "unreachable"  # no answer (network error, timeout)
+
+
+@dataclass(frozen=True)
+class VersionProbe:
+    """The result of probing the gate with one candidate version."""
+
+    version: str
+    source: str  # google_play / app_store / last_known_good / built_in
+    outcome: GateOutcome
+    status: int | None = None
+    code: str | None = None
+
+
+_VERSION_RE = re.compile(r"\d{1,3}(?:\.\d{1,3}){2}")
+_SAFE_CODE_RE = re.compile(r"[A-Za-z0-9_-]{1,40}")
+
+
+def _is_version(value: object) -> bool:
+    return isinstance(value, str) and _VERSION_RE.fullmatch(value) is not None
+
+
+def _gate_code(body: object) -> str | None:
+    code = body.get("code") if isinstance(body, dict) else None
+    if isinstance(code, bool) or not isinstance(code, (str, int)):
+        return None
+    return str(code) if _SAFE_CODE_RE.fullmatch(str(code)) else None
+
+
+async def probe_gate(session: aiohttp.ClientSession, version: str, source: str) -> VersionProbe:
+    """Ask the login gate whether it accepts ``version``; needs no credentials.
+
+    The gate checks ``x-app-version`` before the token, so a dummy token is
+    enough: an accepted version is answered with 401 / code 4100 ("token
+    expires"), a rejected one with 401 / code 4106. Nothing is logged in and
+    nothing is changed on the server.
+    """
+    settings = PanasonicSettings()
+    settings.access_token = "aioaquarea-gate-probe"  # not a credential
+    headers = await PanasonicRequestHeader.get(
+        settings, None, include_client_id=False, version=version
+    )
+    try:
+        async with session.post(
+            f"{BASE_PATH_ACC}/auth/v2/login", headers=headers, json={"language": 0}
+        ) as response:
+            status = response.status
+            try:
+                code = _gate_code(await response.json(content_type=None))
+            except (aiohttp.ClientError, ValueError):
+                code = None
+    except (aiohttp.ClientError, TimeoutError, OSError) as err:
+        _LOGGER.warning("App version gate probe for %s failed (%s)", version, type(err).__name__)
+        return VersionProbe(version, source, GateOutcome.UNREACHABLE)
+    outcome = GateOutcome.UNEXPECTED
+    if status == 401 and code == str(GATE_CODE_VERSION_ACCEPTED):
+        outcome = GateOutcome.ACCEPTED
+    elif status == 401 and code == str(GATE_CODE_VERSION_REJECTED):
+        outcome = GateOutcome.REJECTED
+    return VersionProbe(version, source, outcome, status, code)
+
+
 class CCAppVersion:
+    """The ``x-app-version`` header value, kept working on its own.
+
+    Panasonic rejects app versions it considers outdated (or unknown) with
+    401 / code 4106 on ``/auth/v2/login``, and the version in the app stores is
+    not always the one it accepts. So the version is never trusted blindly:
+    ``refresh`` builds a candidate list (Google Play, App Store, the last
+    version that worked, built-in constants), probes the gate with a dummy token
+    and adopts the first candidate the gate accepts. The accepted version is
+    cached for the lifetime of the process.
+    """
+
+    # The last version the gate accepted, shared by all clients of the process.
+    _process_good: ClassVar[str | None] = None
+
     def __init__(self):
-        self.version = DEFAULT_X_APP_VERSION  # Default version
+        self.version = CCAppVersion._process_good or DEFAULT_X_APP_VERSION
+        # True once the gate accepted ``version`` (it is not just the default).
+        self._verified = CCAppVersion._process_good is not None
+        # Every probe of the latest ``refresh``, for diagnostics and the canary.
+        self.last_probes: list[VersionProbe] = []
 
     async def init(self):
-        # Try to fetch version on initialization
-        await self.refresh()
+        """Pick a version the gate accepts, unless one is already verified.
+
+        Raises ``AppVersionRejectedError`` when the gate rejects every
+        candidate, before any credentials are sent anywhere.
+        """
+        if not self._verified:
+            await self.refresh()
 
     async def refresh(self):
-        # The API client identifies as Android, so use the Android app version.
+        """Probe the gate and adopt the first candidate version it accepts.
+
+        One probe sequence per call, with short timeouts. The current version is
+        only replaced by a version the gate accepted. If the gate cannot be
+        asked (unreachable, or an unknown answer) the current version is kept.
+        Raises ``AppVersionRejectedError`` when every candidate is rejected.
+        """
+        self.last_probes = []
+        timeout = aiohttp.ClientTimeout(total=APP_VERSION_PROBE_TIMEOUT)
+        async with aiohttp.ClientSession(
+            timeout=timeout, cookie_jar=aiohttp.DummyCookieJar()
+        ) as session:
+            async for source, version in self._candidates(session):
+                probe = await probe_gate(session, version, source)
+                self.last_probes.append(probe)
+                if probe.outcome is GateOutcome.ACCEPTED:
+                    _LOGGER.debug("App version %s (%s) accepted", version, source)
+                    self.version = version
+                    self._verified = True
+                    CCAppVersion._process_good = version
+                    return
+                if probe.outcome is not GateOutcome.REJECTED:
+                    # The gate itself is not answering as expected: say nothing
+                    # about the candidates, and do not keep hammering it.
+                    _LOGGER.warning(
+                        "App version gate answered %s (status %s, code %s); "
+                        "keeping app version %s",
+                        probe.outcome.value,
+                        probe.status,
+                        probe.code,
+                        self.version,
+                    )
+                    return
+                _LOGGER.info("App version %s (%s) rejected by Panasonic", version, source)
+        # Every candidate was rejected: nothing that was cached is good anymore.
+        self._verified = False
+        CCAppVersion._process_good = None
+        raise AppVersionRejectedError([probe.version for probe in self.last_probes])
+
+    async def _candidates(
+        self, session: aiohttp.ClientSession
+    ) -> AsyncIterator[tuple[str, str]]:
+        """Yield (source, version) in probe order, skipping duplicates.
+
+        The app stores are only read when the candidates before them were not
+        accepted, and a failing store is skipped.
+        """
+        seen: set[str] = set()
+
+        def fresh(version: str | None) -> bool:
+            if version is None or version in seen:
+                return False
+            seen.add(version)
+            return True
+
+        version = await self._google_play_version(session)
+        if version is not None and fresh(version):
+            yield "google_play", version
+        version = await self._app_store_version(session)
+        if version is not None and fresh(version):
+            yield "app_store", version
+        last_good = self.version if self._verified else None
+        if last_good is not None and fresh(last_good):
+            yield "last_known_good", last_good
+        for version in (*FALLBACK_X_APP_VERSIONS, DEFAULT_X_APP_VERSION):
+            if fresh(version):
+                yield "built_in", version
+
+    @staticmethod
+    async def _google_play_version(session: aiohttp.ClientSession) -> str | None:
+        # The API client identifies as Android, so this is the matching version.
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    "https://play.google.com/store/apps/details"
-                    "?id=com.panasonic.ACCsmart&hl=fr&gl=FR"
-                ) as response:
-                    if response.status == 200:
-                        html_content = await response.text()
-                        version_match = re.search(
-                            r'\[\[\["(\d+\.\d+\.\d+)"\]\]', html_content
-                        )
-                        if version_match:
-                            new_version = version_match.group(1)
-                            _LOGGER.debug(f"Found new app version: {new_version}")
-                            self.version = new_version
-                        else:
-                            _LOGGER.warning(
-                                f"Could not parse version from Google Play page, keeping current version: {self.version}"
-                            )
-                    else:
-                        _LOGGER.error(
-                            f"Failed to fetch Google Play page: {response.status}, keeping current version: {self.version}"
-                        )
-        except Exception as e:
-            _LOGGER.error(
-                f"Error fetching app version: {e}, keeping current version: {self.version}"
-            )
+            async with session.get(GOOGLE_PLAY_APP_URL) as response:
+                if response.status != 200:
+                    _LOGGER.warning("Google Play page answered %s", response.status)
+                    return None
+                match = re.search(r'\[\[\["(\d+\.\d+\.\d+)"\]\]', await response.text())
+        except (aiohttp.ClientError, TimeoutError, OSError, ValueError) as err:
+            _LOGGER.warning("Could not read the Google Play page (%s)", type(err).__name__)
+            return None
+        if match is None or not _is_version(match.group(1)):
+            _LOGGER.warning("Could not parse the app version from the Google Play page")
+            return None
+        return match.group(1)
+
+    @staticmethod
+    async def _app_store_version(session: aiohttp.ClientSession) -> str | None:
+        try:
+            async with session.get(APP_STORE_LOOKUP_URL) as response:
+                if response.status != 200:
+                    _LOGGER.warning("App Store lookup answered %s", response.status)
+                    return None
+                data = json.loads(await response.text())
+            version = data["results"][0]["version"]
+        except (aiohttp.ClientError, TimeoutError, OSError, ValueError, LookupError, TypeError) as err:
+            _LOGGER.warning("Could not read the App Store version (%s)", type(err).__name__)
+            return None
+        return version if _is_version(version) else None
 
     async def get(self):
         return self.version
@@ -94,7 +270,10 @@ class CCAppVersion:
 class PanasonicRequestHeader:
     @staticmethod
     async def get(
-        settings: PanasonicSettings, app_version: CCAppVersion, include_client_id=True
+        settings: PanasonicSettings,
+        app_version: CCAppVersion | None,
+        include_client_id=True,
+        version: str | None = None,
     ):
         if settings.access_token is None:
             raise AuthenticationError(
@@ -114,7 +293,8 @@ class PanasonicRequestHeader:
             "x-app-name": "Comfort Cloud",
             "x-app-timestamp": timestamp,
             "x-app-type": "1",
-            "x-app-version": await app_version.get(),
+            # ``version`` pins a specific value (used to probe the gate)
+            "x-app-version": version or await (app_version or CCAppVersion()).get(),
             "x-cfc-api-key": api_key,
             "x-user-authorization-v2": "Bearer " + settings.access_token,
         }
@@ -704,7 +884,11 @@ class Authenticator:
             f"{BASE_PATH_ACC}/auth/v2/login", headers=headers, json={"language": 0}
         )
         if await has_new_version_been_published(response):
-            self._logger.info("New version of acc client id has been published")
+            # Panasonic stopped accepting the version we announce. Probe once for
+            # one it accepts (raises AppVersionRejectedError when there is none),
+            # retry once, and report a second rejection as what it is.
+            self._logger.info("Panasonic rejected the app version, probing for a new one")
+            response.release()
             await self._app_version.refresh()
             response = await self._sess.post(
                 f"{BASE_PATH_ACC}/auth/v2/login",
@@ -713,6 +897,9 @@ class Authenticator:
                 ),
                 json={"language": 0},
             )
+            if await has_new_version_been_published(response):
+                response.release()
+                raise AppVersionRejectedError([await self._app_version.get()])
 
         await check_response(response, "get_acc_client_id", 200)
 
