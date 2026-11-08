@@ -33,13 +33,23 @@ class AquareaConsumptionManager:
         return report.history if report and report.history else None
 
     async def get_device_consumption_report(
-        self, long_id: str, aggregation: DateType, date_input: str
+        self,
+        long_id: str,
+        aggregation: DateType,
+        date_input: str,
+        *,
+        raise_on_error: bool = False,
     ) -> ConsumptionReport | None:
         """Get the full consumption response (buckets, last year, tariff).
 
-        Returns None when the request fails (other than authentication) or the
-        response has no ``historyDataList``. See ``ConsumptionReport`` for the
-        date format and the window of each aggregation.
+        By default returns None when the request fails (other than
+        authentication) or the response has no ``historyDataList``, which
+        cannot tell "no data" from a failure. With ``raise_on_error`` a failed
+        request raises (``ApiError``, ``RequestFailedError``, a network error)
+        instead, and a successful response without ``historyDataList`` gives a
+        ``ConsumptionReport`` with empty ``history``, so None is never returned.
+        See ``ConsumptionReport`` for the date format and the window of each
+        aggregation.
         """
         try:
             # Format timezone offset
@@ -76,6 +86,10 @@ class AquareaConsumptionManager:
             consumption_data = await response.json()
             if consumption_data and consumption_data.get("historyDataList"):
                 return ConsumptionReport.from_dict(consumption_data)
+            if raise_on_error:
+                return ConsumptionReport.from_dict(
+                    consumption_data if isinstance(consumption_data, dict) else {}
+                )
             _LOGGER.warning(
                 "No consumption data found for device %s, date %s, aggregation %s",
                 long_id,
@@ -87,6 +101,8 @@ class AquareaConsumptionManager:
             # Let the caller (auth_required) re-login or surface the problem
             raise
         except ApiError as ex:
+            if raise_on_error:
+                raise
             _LOGGER.warning(
                 "Failed to get consumption data for device %s, date %s, aggregation %s: %s",
                 long_id,
@@ -96,6 +112,8 @@ class AquareaConsumptionManager:
             )
             return None
         except Exception as ex:
+            if raise_on_error:
+                raise
             _LOGGER.exception(
                 "An unexpected error occurred while getting consumption data for device %s, date %s, aggregation %s: %s",
                 long_id,

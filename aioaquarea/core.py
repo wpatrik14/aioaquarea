@@ -521,12 +521,21 @@ class AquareaClient:  # Renamed Client to AquareaClient
 
     @auth_required
     async def get_device_consumption_report(
-        self, long_id: str, aggregation: DateType, date_input: str
+        self,
+        long_id: str,
+        aggregation: DateType,
+        date_input: str,
+        *,
+        raise_on_error: bool = False,
     ) -> ConsumptionReport | None:
         """Get the full consumption response: buckets, last year's buckets
-        (YEAR only) and the tariff/currency. See ``ConsumptionReport``."""
+        (YEAR only) and the tariff/currency. See ``ConsumptionReport``.
+
+        With ``raise_on_error`` failures raise instead of returning None, and a
+        response without data is an empty report (see
+        ``AquareaConsumptionManager.get_device_consumption_report``)."""
         return await self._consumption_manager.get_device_consumption_report(
-            long_id, aggregation, date_input
+            long_id, aggregation, date_input, raise_on_error=raise_on_error
         )
 
     @auth_required

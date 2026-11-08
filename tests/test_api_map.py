@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 import datetime as dt
 
+import aiohttp
 import pytest
 
 from aioaquarea import (
@@ -403,6 +404,43 @@ async def test_consumption_year_rolling_window(logged_client, mocked):
 async def test_consumption_report_none_when_empty(logged_client, mocked):
     mocked.post(TRANSFER, payload={"historyDataList": []})
     assert await logged_client.get_device_consumption_report(LONG_ID, DateType.DAY, "20261018") is None
+
+
+async def test_consumption_report_raise_on_error_empty_is_a_report(logged_client, mocked):
+    mocked.post(TRANSFER, payload={"historyDataList": [], "deviceRegisterTime": "20240801"})
+    report = await logged_client.get_device_consumption_report(
+        LONG_ID, DateType.YEAR, "20260101", raise_on_error=True
+    )
+    assert report is not None and report.history == []
+    assert report.device_register_time == "20240801"
+
+
+async def test_consumption_report_raise_on_error_missing_list(logged_client, mocked):
+    mocked.post(TRANSFER, payload={})
+    report = await logged_client.get_device_consumption_report(
+        LONG_ID, DateType.YEAR, "20260101", raise_on_error=True
+    )
+    assert report is not None and report.history == []
+
+
+async def test_consumption_report_raise_on_error_api_error(logged_client, mocked):
+    mocked.post(TRANSFER, status=500, payload={"code": 5000, "message": "boom"})
+    assert await logged_client.get_device_consumption_report(LONG_ID, DateType.YEAR, "20260101") is None
+    mocked.post(TRANSFER, status=500, payload={"code": 5000, "message": "boom"})
+    with pytest.raises(ApiError):
+        await logged_client.get_device_consumption_report(
+            LONG_ID, DateType.YEAR, "20260101", raise_on_error=True
+        )
+
+
+async def test_consumption_report_raise_on_error_network_error(logged_client, mocked):
+    mocked.post(TRANSFER, exception=aiohttp.ClientConnectionError("down"))
+    with pytest.raises(aiohttp.ClientConnectionError):
+        await logged_client.get_device_consumption_report(
+            LONG_ID, DateType.YEAR, "20260101", raise_on_error=True
+        )
+    mocked.post(TRANSFER, exception=aiohttp.ClientConnectionError("down"))
+    assert await logged_client.get_device_consumption_report(LONG_ID, DateType.YEAR, "20260101") is None
 
 
 def test_consumption_report_tolerates_missing_keys():
