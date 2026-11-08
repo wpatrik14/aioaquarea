@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
+from unittest.mock import AsyncMock
 
 import aiohttp
 import pytest
@@ -14,6 +15,7 @@ import pytest
 from aioaquarea import (
     AgreementNotAcceptedError,
     ApiError,
+    AuthenticationError,
     DateType,
     RequestFailedError,
     SpecialStatus,
@@ -441,6 +443,51 @@ async def test_consumption_report_raise_on_error_network_error(logged_client, mo
         )
     mocked.post(TRANSFER, exception=aiohttp.ClientConnectionError("down"))
     assert await logged_client.get_device_consumption_report(LONG_ID, DateType.YEAR, "20260101") is None
+
+
+async def test_consumption_report_raise_on_error_non_object_body(logged_client, mocked):
+    mocked.post(TRANSFER, body="null", content_type="application/json")
+    with pytest.raises(RequestFailedError):
+        await logged_client.get_device_consumption_report(
+            LONG_ID, DateType.YEAR, "20260101", raise_on_error=True
+        )
+    mocked.post(TRANSFER, body="null", content_type="application/json")
+    assert await logged_client.get_device_consumption_report(LONG_ID, DateType.YEAR, "20260101") is None
+
+
+async def test_403_logs_in_again_and_repeats_the_request_by_default(logged_client, mocked, monkeypatch):
+    login = AsyncMock()
+    monkeypatch.setattr(logged_client, "login", login)
+    mocked.post(TRANSFER, status=403, payload={})
+    mocked.post(TRANSFER, payload=live("consumption_year"))
+    report = await logged_client.get_device_consumption_report(LONG_ID, DateType.YEAR, "20260101")
+    assert report is not None
+    assert login.await_count == 1
+    assert len(sent(mocked)) == 2
+
+
+async def test_403_with_retry_login_false_sends_one_request_and_no_login(logged_client, mocked, monkeypatch):
+    login = AsyncMock()
+    monkeypatch.setattr(logged_client, "login", login)
+    mocked.post(TRANSFER, status=403, payload={})
+    with pytest.raises(AuthenticationError):
+        await logged_client.get_device_consumption_report(
+            LONG_ID, DateType.YEAR, "20260101", raise_on_error=True, retry_login=False
+        )
+    assert login.await_count == 0
+    assert len(sent(mocked)) == 1
+
+
+async def test_retry_login_false_does_not_log_in_when_logged_out(logged_client, mocked, monkeypatch):
+    login = AsyncMock()
+    monkeypatch.setattr(logged_client, "login", login)
+    monkeypatch.setattr(type(logged_client), "is_logged", property(lambda self: False))
+    with pytest.raises(AuthenticationError):
+        await logged_client.get_device_consumption_report(
+            LONG_ID, DateType.YEAR, "20260101", retry_login=False
+        )
+    assert login.await_count == 0
+    assert not sent(mocked)
 
 
 def test_consumption_report_tolerates_missing_keys():

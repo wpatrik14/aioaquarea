@@ -4,7 +4,12 @@ import datetime as dt
 import logging
 from typing import TYPE_CHECKING
 
-from .errors import AgreementNotAcceptedError, ApiError, AuthenticationError
+from .errors import (
+    AgreementNotAcceptedError,
+    ApiError,
+    AuthenticationError,
+    RequestFailedError,
+)
 from .statistics import Consumption, ConsumptionReport, DateType
 
 if TYPE_CHECKING:
@@ -39,6 +44,7 @@ class AquareaConsumptionManager:
         date_input: str,
         *,
         raise_on_error: bool = False,
+        retry_login: bool = True,
     ) -> ConsumptionReport | None:
         """Get the full consumption response (buckets, last year, tariff).
 
@@ -47,8 +53,11 @@ class AquareaConsumptionManager:
         cannot tell "no data" from a failure. With ``raise_on_error`` a failed
         request raises (``ApiError``, ``RequestFailedError``, a network error)
         instead, and a successful response without ``historyDataList`` gives a
-        ``ConsumptionReport`` with empty ``history``, so None is never returned.
-        See ``ConsumptionReport`` for the date format and the window of each
+        ``ConsumptionReport`` with empty ``history``, so None is never returned;
+        a body that is not a JSON object is a failure then. ``retry_login`` is
+        read by the ``auth_required`` decorator of ``Client`` (see there): with
+        False an expired-token error is raised instead of logging in again and
+        repeating the request. See ``ConsumptionReport`` for the date format and the window of each
         aggregation.
         """
         try:
@@ -87,9 +96,9 @@ class AquareaConsumptionManager:
             if consumption_data and consumption_data.get("historyDataList"):
                 return ConsumptionReport.from_dict(consumption_data)
             if raise_on_error:
-                return ConsumptionReport.from_dict(
-                    consumption_data if isinstance(consumption_data, dict) else {}
-                )
+                if not isinstance(consumption_data, dict):
+                    raise RequestFailedError("Invalid consumption response")
+                return ConsumptionReport.from_dict(consumption_data)
             _LOGGER.warning(
                 "No consumption data found for device %s, date %s, aggregation %s",
                 long_id,
