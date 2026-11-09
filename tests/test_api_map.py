@@ -445,13 +445,15 @@ async def test_consumption_report_raise_on_error_network_error(logged_client, mo
     assert await logged_client.get_device_consumption_report(LONG_ID, DateType.YEAR, "20260101") is None
 
 
-async def test_consumption_report_raise_on_error_non_object_body(logged_client, mocked):
-    mocked.post(TRANSFER, body="null", content_type="application/json")
+@pytest.mark.parametrize("body", ["null", "[1]", '"x"', "1", "[]"])
+async def test_consumption_report_raise_on_error_non_object_body(logged_client, mocked, body):
+    mocked.post(TRANSFER, body=body, content_type="application/json")
     with pytest.raises(RequestFailedError):
         await logged_client.get_device_consumption_report(
             LONG_ID, DateType.YEAR, "20260101", raise_on_error=True
         )
-    mocked.post(TRANSFER, body="null", content_type="application/json")
+    # Without raise_on_error the old contract holds: None, no exception.
+    mocked.post(TRANSFER, body=body, content_type="application/json")
     assert await logged_client.get_device_consumption_report(LONG_ID, DateType.YEAR, "20260101") is None
 
 

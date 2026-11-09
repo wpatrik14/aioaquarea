@@ -44,7 +44,6 @@ class AquareaConsumptionManager:
         date_input: str,
         *,
         raise_on_error: bool = False,
-        retry_login: bool = True,
     ) -> ConsumptionReport | None:
         """Get the full consumption response (buckets, last year, tariff).
 
@@ -54,10 +53,10 @@ class AquareaConsumptionManager:
         request raises (``ApiError``, ``RequestFailedError``, a network error)
         instead, and a successful response without ``historyDataList`` gives a
         ``ConsumptionReport`` with empty ``history``, so None is never returned;
-        a body that is not a JSON object is a failure then. ``retry_login`` is
-        read by the ``auth_required`` decorator of ``Client`` (see there): with
-        False an expired-token error is raised instead of logging in again and
-        repeating the request. See ``ConsumptionReport`` for the date format and the window of each
+        a body that is not a JSON object is a failure then (``RequestFailedError``).
+        The ``retry_login`` argument of ``Client.get_device_consumption_report``
+        is read by its ``auth_required`` decorator, not here. See
+        ``ConsumptionReport`` for the date format and the window of each
         aggregation.
         """
         try:
@@ -93,11 +92,14 @@ class AquareaConsumptionManager:
             )
 
             consumption_data = await response.json()
-            if consumption_data and consumption_data.get("historyDataList"):
+            if not isinstance(consumption_data, dict):
+                # A list or a string is not a consumption response.
+                if raise_on_error:
+                    raise RequestFailedError("Invalid consumption response")
+                consumption_data = {}
+            if consumption_data.get("historyDataList"):
                 return ConsumptionReport.from_dict(consumption_data)
             if raise_on_error:
-                if not isinstance(consumption_data, dict):
-                    raise RequestFailedError("Invalid consumption response")
                 return ConsumptionReport.from_dict(consumption_data)
             _LOGGER.warning(
                 "No consumption data found for device %s, date %s, aggregation %s",
