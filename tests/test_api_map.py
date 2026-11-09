@@ -7,12 +7,15 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
+from unittest.mock import AsyncMock
 
+import aiohttp
 import pytest
 
 from aioaquarea import (
     AgreementNotAcceptedError,
     ApiError,
+    AuthenticationError,
     DateType,
     RequestFailedError,
     SpecialStatus,
@@ -403,6 +406,90 @@ async def test_consumption_year_rolling_window(logged_client, mocked):
 async def test_consumption_report_none_when_empty(logged_client, mocked):
     mocked.post(TRANSFER, payload={"historyDataList": []})
     assert await logged_client.get_device_consumption_report(LONG_ID, DateType.DAY, "20261018") is None
+
+
+async def test_consumption_report_raise_on_error_empty_is_a_report(logged_client, mocked):
+    mocked.post(TRANSFER, payload={"historyDataList": [], "deviceRegisterTime": "20240801"})
+    report = await logged_client.get_device_consumption_report(
+        LONG_ID, DateType.YEAR, "20260101", raise_on_error=True
+    )
+    assert report is not None and report.history == []
+    assert report.device_register_time == "20240801"
+
+
+async def test_consumption_report_raise_on_error_missing_list(logged_client, mocked):
+    mocked.post(TRANSFER, payload={})
+    report = await logged_client.get_device_consumption_report(
+        LONG_ID, DateType.YEAR, "20260101", raise_on_error=True
+    )
+    assert report is not None and report.history == []
+
+
+async def test_consumption_report_raise_on_error_api_error(logged_client, mocked):
+    mocked.post(TRANSFER, status=500, payload={"code": 5000, "message": "boom"})
+    assert await logged_client.get_device_consumption_report(LONG_ID, DateType.YEAR, "20260101") is None
+    mocked.post(TRANSFER, status=500, payload={"code": 5000, "message": "boom"})
+    with pytest.raises(ApiError):
+        await logged_client.get_device_consumption_report(
+            LONG_ID, DateType.YEAR, "20260101", raise_on_error=True
+        )
+
+
+async def test_consumption_report_raise_on_error_network_error(logged_client, mocked):
+    mocked.post(TRANSFER, exception=aiohttp.ClientConnectionError("down"))
+    with pytest.raises(aiohttp.ClientConnectionError):
+        await logged_client.get_device_consumption_report(
+            LONG_ID, DateType.YEAR, "20260101", raise_on_error=True
+        )
+    mocked.post(TRANSFER, exception=aiohttp.ClientConnectionError("down"))
+    assert await logged_client.get_device_consumption_report(LONG_ID, DateType.YEAR, "20260101") is None
+
+
+@pytest.mark.parametrize("body", ["null", "[1]", '"x"', "1", "[]"])
+async def test_consumption_report_raise_on_error_non_object_body(logged_client, mocked, body):
+    mocked.post(TRANSFER, body=body, content_type="application/json")
+    with pytest.raises(RequestFailedError):
+        await logged_client.get_device_consumption_report(
+            LONG_ID, DateType.YEAR, "20260101", raise_on_error=True
+        )
+    # Without raise_on_error the old contract holds: None, no exception.
+    mocked.post(TRANSFER, body=body, content_type="application/json")
+    assert await logged_client.get_device_consumption_report(LONG_ID, DateType.YEAR, "20260101") is None
+
+
+async def test_403_logs_in_again_and_repeats_the_request_by_default(logged_client, mocked, monkeypatch):
+    login = AsyncMock()
+    monkeypatch.setattr(logged_client, "login", login)
+    mocked.post(TRANSFER, status=403, payload={})
+    mocked.post(TRANSFER, payload=live("consumption_year"))
+    report = await logged_client.get_device_consumption_report(LONG_ID, DateType.YEAR, "20260101")
+    assert report is not None
+    assert login.await_count == 1
+    assert len(sent(mocked)) == 2
+
+
+async def test_403_with_retry_login_false_sends_one_request_and_no_login(logged_client, mocked, monkeypatch):
+    login = AsyncMock()
+    monkeypatch.setattr(logged_client, "login", login)
+    mocked.post(TRANSFER, status=403, payload={})
+    with pytest.raises(AuthenticationError):
+        await logged_client.get_device_consumption_report(
+            LONG_ID, DateType.YEAR, "20260101", raise_on_error=True, retry_login=False
+        )
+    assert login.await_count == 0
+    assert len(sent(mocked)) == 1
+
+
+async def test_retry_login_false_does_not_log_in_when_logged_out(logged_client, mocked, monkeypatch):
+    login = AsyncMock()
+    monkeypatch.setattr(logged_client, "login", login)
+    monkeypatch.setattr(type(logged_client), "is_logged", property(lambda self: False))
+    with pytest.raises(AuthenticationError):
+        await logged_client.get_device_consumption_report(
+            LONG_ID, DateType.YEAR, "20260101", retry_login=False
+        )
+    assert login.await_count == 0
+    assert not sent(mocked)
 
 
 def test_consumption_report_tolerates_missing_keys():

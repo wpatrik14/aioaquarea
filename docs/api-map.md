@@ -240,7 +240,7 @@ in `tests/fixtures/live/`):
 | Other status fields | `Device.bivalent`, `bivalent_actual`, `external_heater`, `electric_anode`, `control_box`, `uncontrollable` (`uncontrollableTaw1Flg`), `service_type`, `multi_od_connection`, `model_series_selection`, `stand_alone`, `cool_mode` (raw values, None when missing) |
 | `/device/group` fields | `DeviceInfo.connection_status`, `DeviceInfo.dhw_flag` (also on `Device`) |
 | `deviceDirect=0` fallback | `Device.status_data_mode` / `DeviceStatus.data_mode` = `CACHED`; `water_pressure` is None then |
-| Consumption | `Client.get_device_consumption_report()` -> `ConsumptionReport` (`history`, `last_year_history`, `electric_rate`, `currency`, `device_register_time`, ...); `Consumption.is_future` for buckets without `outdoorTemp` |
+| Consumption | `Client.get_device_consumption_report()` -> `ConsumptionReport` (`history`, `last_year_history`, `electric_rate`, `currency`, `device_register_time`, ...); `Consumption.is_future` for buckets without `outdoorTemp`; `raise_on_error=True` raises on failures (a body that is not a JSON object, such as a list or a string, raises `RequestFailedError`) and returns an empty report for "no data" instead of None for both; `retry_login=False` raises an expired token or HTTP 401/403 as `AuthenticationError` instead of logging in again and repeating the request (one request, no login) |
 | Weekly timer | `Client.get_weekly_timer()` / `Device.get_weekly_timer()` -> `WeeklyTimer` (read only) |
 | Agreements | `Client.get_agreement_status()`; error code 4103 raises `AgreementNotAcceptedError` |
 | Gateway errors | `{"code": N, "message": ...}` bodies raise `ApiError` with `error_code` `"N"` |

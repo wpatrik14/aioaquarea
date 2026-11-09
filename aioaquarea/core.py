@@ -521,12 +521,27 @@ class AquareaClient:  # Renamed Client to AquareaClient
 
     @auth_required
     async def get_device_consumption_report(
-        self, long_id: str, aggregation: DateType, date_input: str
+        self,
+        long_id: str,
+        aggregation: DateType,
+        date_input: str,
+        *,
+        raise_on_error: bool = False,
+        retry_login: bool = True,
     ) -> ConsumptionReport | None:
         """Get the full consumption response: buckets, last year's buckets
-        (YEAR only) and the tariff/currency. See ``ConsumptionReport``."""
+        (YEAR only) and the tariff/currency. See ``ConsumptionReport``.
+
+        With ``raise_on_error`` failures raise instead of returning None, and a
+        response without data is an empty report (see
+        ``AquareaConsumptionManager.get_device_consumption_report``).
+
+        With ``retry_login=False`` an expired token (or HTTP 401/403) is
+        raised as ``AuthenticationError`` instead of logging in again and
+        repeating the request, so a caller that must not add requests to a
+        block (a long history walk) sends exactly one."""
         return await self._consumption_manager.get_device_consumption_report(
-            long_id, aggregation, date_input
+            long_id, aggregation, date_input, raise_on_error=raise_on_error
         )
 
     @auth_required

@@ -15,12 +15,22 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def auth_required(fn):
-    """Decorator to require authentication and to refresh login if it's able to."""
+    """Decorator to require authentication and to refresh login if it's able to.
+
+    A call can pass ``retry_login=False`` (the wrapped method must accept it)
+    to get the first authentication failure raised instead of logging in and
+    repeating the request; and to get one raised when not logged in at all.
+    """
 
     @functools.wraps(fn)
     async def _wrap(
         client: "AquareaClient", *args, **kwargs
     ):  # Use string literal for type hint
+        retry_login = kwargs.get("retry_login", True)
+        if client.is_logged is False and not retry_login:
+            raise AuthenticationError(
+                AuthenticationErrorCodes.TOKEN_EXPIRED, "Not logged in"
+            )
         if client.is_logged is False:
             client.logger.warning(f"{client}: User is not logged or session is too old")
             await client.login()
@@ -43,8 +53,8 @@ def auth_required(fn):
             ):
                 raise
 
-            # If refresh is not enabled, always raise.
-            if not client.is_refresh_login_enabled:
+            # If refresh is not enabled, or the caller does not want it, raise.
+            if not client.is_refresh_login_enabled or not retry_login:
                 raise
 
             # If it's an ApiError with "Missing Authentication Token" or AuthenticationError with TOKEN_EXPIRED, try to re-login.

@@ -4,7 +4,12 @@ import datetime as dt
 import logging
 from typing import TYPE_CHECKING
 
-from .errors import AgreementNotAcceptedError, ApiError, AuthenticationError
+from .errors import (
+    AgreementNotAcceptedError,
+    ApiError,
+    AuthenticationError,
+    RequestFailedError,
+)
 from .statistics import Consumption, ConsumptionReport, DateType
 
 if TYPE_CHECKING:
@@ -33,13 +38,26 @@ class AquareaConsumptionManager:
         return report.history if report and report.history else None
 
     async def get_device_consumption_report(
-        self, long_id: str, aggregation: DateType, date_input: str
+        self,
+        long_id: str,
+        aggregation: DateType,
+        date_input: str,
+        *,
+        raise_on_error: bool = False,
     ) -> ConsumptionReport | None:
         """Get the full consumption response (buckets, last year, tariff).
 
-        Returns None when the request fails (other than authentication) or the
-        response has no ``historyDataList``. See ``ConsumptionReport`` for the
-        date format and the window of each aggregation.
+        By default returns None when the request fails (other than
+        authentication) or the response has no ``historyDataList``, which
+        cannot tell "no data" from a failure. With ``raise_on_error`` a failed
+        request raises (``ApiError``, ``RequestFailedError``, a network error)
+        instead, and a successful response without ``historyDataList`` gives a
+        ``ConsumptionReport`` with empty ``history``, so None is never returned;
+        a body that is not a JSON object is a failure then (``RequestFailedError``).
+        The ``retry_login`` argument of ``Client.get_device_consumption_report``
+        is read by its ``auth_required`` decorator, not here. See
+        ``ConsumptionReport`` for the date format and the window of each
+        aggregation.
         """
         try:
             # Format timezone offset
@@ -74,7 +92,14 @@ class AquareaConsumptionManager:
             )
 
             consumption_data = await response.json()
-            if consumption_data and consumption_data.get("historyDataList"):
+            if not isinstance(consumption_data, dict):
+                # A list or a string is not a consumption response.
+                if raise_on_error:
+                    raise RequestFailedError("Invalid consumption response")
+                consumption_data = {}
+            if consumption_data.get("historyDataList"):
+                return ConsumptionReport.from_dict(consumption_data)
+            if raise_on_error:
                 return ConsumptionReport.from_dict(consumption_data)
             _LOGGER.warning(
                 "No consumption data found for device %s, date %s, aggregation %s",
@@ -87,6 +112,8 @@ class AquareaConsumptionManager:
             # Let the caller (auth_required) re-login or surface the problem
             raise
         except ApiError as ex:
+            if raise_on_error:
+                raise
             _LOGGER.warning(
                 "Failed to get consumption data for device %s, date %s, aggregation %s: %s",
                 long_id,
@@ -96,6 +123,8 @@ class AquareaConsumptionManager:
             )
             return None
         except Exception as ex:
+            if raise_on_error:
+                raise
             _LOGGER.exception(
                 "An unexpected error occurred while getting consumption data for device %s, date %s, aggregation %s: %s",
                 long_id,
